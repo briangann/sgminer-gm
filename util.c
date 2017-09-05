@@ -2229,8 +2229,8 @@ static bool parse_extranonce_ethash_nicehash(struct pool *pool, json_t *val)
 {
   char *n1str;
 
-  char *ss = json_dumps(val, JSON_INDENT(3));
-  applog(LOG_INFO, "parse_extranonce_ethash_nicehash val content: %s", ss);
+  //char *ss = json_dumps(val, JSON_INDENT(3));
+  //applog(LOG_INFO, "parse_extranonce_ethash_nicehash val content: %s", ss);
   if (!(n1str = json_array_string(val, 0))) {
     return false;
   }

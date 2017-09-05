@@ -815,13 +815,12 @@ bool detect_stratum(struct pool *pool, char *url)
     pool->has_stratum = true;
     // TODO: nicehash or not
     pool->nicehash_stratum_compat = false;
-    pool->extranonce_subscribe = false;
+    //pool->extranonce_subscribe = false;
     if (strstr(url, "nicehash.com")) {
       pool->nicehash_stratum_compat = true;
       // force this to true or nothing will work with nicehash
       pool->extranonce_subscribe = true;
       applog(LOG_INFO,"NICEHASH Stratum Detected");
-      return true;
     }
     pool->stratum_url = pool->sockaddr_url;
     return true;
@@ -2818,12 +2817,12 @@ static void get_statline(char *buf, size_t bufsiz, struct cgpu_info *cgpu)
 
   snprintf(buf, bufsiz, "%s%d ", cgpu->drv->name, cgpu->device_id);
   cgpu->drv->get_statline_before(buf, bufsiz, cgpu);
-  tailsprintf(buf, bufsiz, "(%ds):%s (avg):%sh/s | A:%.0f R:%.0f HW:%d WU:%.3f/m",
+  tailsprintf(buf, bufsiz, "(%ds):%s (avg):%sh/s | A:%d R:%d HW:%d WU:%.3f/m",
     opt_log_interval,
     displayed_rolling,
     displayed_hashes,
-    cgpu->diff_accepted,
-    cgpu->diff_rejected,
+    cgpu->accepted,
+    cgpu->rejected,
     cgpu->hw_errors,
     wu);
   cgpu->drv->get_statline(buf, bufsiz, cgpu);
@@ -3343,6 +3342,7 @@ static bool submit_upstream_work(struct work *work, CURL *curl, char *curl_err_s
     // TODO: nicehash or not?
     char *ASCIINonce = bin2hex(&tmp, 8);
     if (work->pool->nicehash_stratum_compat) {
+      free(ASCIINonce);
       ASCIINonce = bin2hex((char *)&tmp + pool->n1_len, pool->n2size + 4);
     }
 	  snprintf(s, 128 + 16 + 512, "{\"jsonrpc\":\"2.0\", \"method\":\"eth_submitWork\", \"params\":[\"0x%s\", \"0x%s\", \"0x%s\"],\"id\":1}", ASCIINonce, ASCIIPoWHash, ASCIIMixHash);
@@ -5549,10 +5549,10 @@ static void hashmeter(int thr_id, struct timeval *diff,
   suffix_string(dr64, displayed_rolling, sizeof(displayed_rolling), 4);
 
   snprintf(statusline, sizeof(statusline),
-    "%s(%ds):%s (avg):%sh/s | A:%.0f  R:%.0f  HW:%d  WU:%.3f/m",
+    "%s(%ds):%s (avg):%sh/s | A:%d  R:%d  HW:%d  WU:%.3f/m",
     want_per_device_stats ? "ALL " : "",
     opt_log_interval, displayed_rolling, displayed_hashes,
-    total_diff_accepted, total_diff_rejected, hw_errors,
+    total_accepted, total_rejected, hw_errors,
     total_diff1 / total_secs * 60);
 
   local_mhashes_done = 0;
@@ -6734,20 +6734,20 @@ static void gen_stratum_work_ethash_nicehash(struct pool *pool, struct work *wor
   work->longpoll = false;
   work->getwork_mode = GETWORK_MODE_STRATUM;
   work->work_block = work->data[0];
-  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - epoch %d", work->thr_id, work->eth_epoch);
-  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - jobid %s", work->thr_id, work->job_id);
-  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - pool nonce1 %s", work->thr_id, pool->nonce1);
-  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->sdiff = %u", work->thr_id, work->sdiff);
-  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->work_difficulty = %u", work->thr_id, work->work_difficulty);
-  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->network_diff = %u", work->thr_id, work->network_diff);
-  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->Nonce = %u", work->thr_id, work->Nonce);
-  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->nonce2 = %u", work->thr_id, work->nonce2);
-  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->nonce2_len = %u", work->thr_id, work->nonce2_len);
-  char *spethwork = bin2hex(pool->EthWork, 32);
-  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - pool->EthWork = %s", work->thr_id, spethwork);
-  char *swtarget = bin2hex(work->target, 32);
-  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->target = %s", work->thr_id, swtarget);
-  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->work_block = %d", work->thr_id, work->work_block);
+  //applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - epoch %d", work->thr_id, work->eth_epoch);
+  //applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - jobid %s", work->thr_id, work->job_id);
+  //applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - pool nonce1 %s", work->thr_id, pool->nonce1);
+  //applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->sdiff = %u", work->thr_id, work->sdiff);
+  //applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->work_difficulty = %u", work->thr_id, work->work_difficulty);
+  //applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->network_diff = %u", work->thr_id, work->network_diff);
+  //applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->Nonce = %u", work->thr_id, work->Nonce);
+  //applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->nonce2 = %u", work->thr_id, work->nonce2);
+  //applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->nonce2_len = %u", work->thr_id, work->nonce2_len);
+  //char *spethwork = bin2hex(pool->EthWork, 32);
+  //applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - pool->EthWork = %s", work->thr_id, spethwork);
+  //char *swtarget = bin2hex(work->target, 32);
+  //applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->target = %s", work->thr_id, swtarget);
+  //applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->work_block = %d", work->thr_id, work->work_block);
   // Do not allow ntime rolling
   work->drv_rolllimit = 0;
 

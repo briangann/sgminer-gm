@@ -371,7 +371,7 @@ static void set_current_pool(struct pool *pool) {
   currentpool = pool;
 
   cg_wlock(&currentpool->data_lock);
-  if (currentpool->algorithm.type == ALGO_ETHASH) 
+  if (currentpool->algorithm.type == ALGO_ETHASH)
     currentpool->eth_cache.disabled = false;
   cg_wunlock(&currentpool->data_lock);
 }
@@ -626,7 +626,12 @@ struct pool *add_pool(void)
   // (which can cause serious issues with things like P2Pool)
   // to true by default - set it to what it should be - false
   // unless enabled explicitly.
-  pool->extranonce_subscribe = false;
+  // TODO: nicehash or not? default needs to be false
+  if (false) {
+    pool->extranonce_subscribe = false;
+  } else {
+    pool->extranonce_subscribe = true;
+  }
 
   pool->description = "";
 
@@ -2063,7 +2068,7 @@ static bool __build_gbt_txns(struct pool *pool, json_t *res_val)
     applog(LOG_DEBUG, "gbt_txns: %s", pool->coinbasetxn);
     goto out;
   }
-  
+
   if (!pool->gbt_txns)
     goto out;
 
@@ -3329,8 +3334,12 @@ static bool submit_upstream_work(struct work *work, CURL *curl, char *curl_err_s
 	  uint64_t tmp = bswap_64(work->Nonce);
 	  char *ASCIIMixHash = bin2hex(work->mixhash, 32);
 	  char *ASCIIPoWHash = bin2hex(work->data, 32);
-	  char *ASCIINonce = bin2hex(&tmp, 8);
 
+    // TODO: nicehash or not?
+    char *ASCIINonce = bin2hex(&tmp, 8);
+    if (true) {
+      ASCIINonce = bin2hex((char *)&tmp + pool->n1_len, pool->n2size + 4);
+    }
 	  snprintf(s, 128 + 16 + 512, "{\"jsonrpc\":\"2.0\", \"method\":\"eth_submitWork\", \"params\":[\"0x%s\", \"0x%s\", \"0x%s\"],\"id\":1}", ASCIINonce, ASCIIPoWHash, ASCIIMixHash);
 
 	  free(ASCIINonce);
@@ -3353,7 +3362,7 @@ static bool submit_upstream_work(struct work *work, CURL *curl, char *curl_err_s
       str_len += strlen(workid);
     }
     */
-    
+
     uint8_t txn_cnt_bin[9];
     cg_rlock(&pool->gbt_lock);
     int txn_cnt_len = add_var_int(txn_cnt_bin, pool->gbt_txns + 1);
@@ -4357,10 +4366,19 @@ static double share_diff(const struct work *work)
   if (work->pool->algorithm.type == ALGO_ETHASH) {
     uint8_t tmp[32];
     swab256(tmp, work->hash);
-    ret = eth2pow256 / (le256todouble(tmp) + 1.);
-    uint64_t le_target = *(uint64_t*) (work->target + 24);
-    if (*(uint64_t*) (tmp + 24) > le_target)
-      return ret;
+    // TODO: nicehash or not?
+    if (false) {
+      ret = eth2pow256 / (le256todouble(tmp) + 1.);
+      uint64_t le_target = *(uint64_t*) (work->target + 24);
+      if (*(uint64_t*) (tmp + 24) > le_target)
+        return ret;
+    } else {
+      d64 = work->pool->algorithm.share_diff_multiplier * truediffone;
+      // TODO: maybe just use work->hash without the swapbytes and leave the algorithm.c alone?
+      // s64 = le256todouble(work->hash);
+      s64 = le256todouble(tmp);
+      ret = d64 / (s64 + 1.);
+    }
   }
   else {
     d64 = work->pool->algorithm.share_diff_multiplier * truediffone;
@@ -5658,11 +5676,11 @@ static bool parse_stratum_response(struct pool *pool, char *s)
 
         if (err_val) {
           ss = json_dumps(err_val, JSON_INDENT(3));
-        } 
+        }
         else {
           ss = strdup("(unknown reason)");
         }
-        
+
         applog(LOG_INFO, "JSON-RPC response decode failed: %s", ss);
 
         free(ss);
@@ -5812,6 +5830,7 @@ static void wait_lpcurrent(struct pool *pool);
 static void pool_resus(struct pool *pool);
 static void gen_stratum_work(struct pool *pool, struct work *work);
 static void gen_stratum_work_eth(struct pool *pool, struct work *work);
+static void gen_stratum_work_ethash_nicehash(struct pool *pool, struct work *work);
 static void gen_stratum_work_cn(struct pool *pool, struct work *work);
 static void stratum_resumed(struct pool *pool)
 {
@@ -5884,7 +5903,7 @@ static void *stratum_rthread(void *userdata)
     FD_SET(pool->sock, &rd);
     timeout.tv_sec = 90;
     timeout.tv_usec = 0;
-    
+
 
     if (pool->algorithm.type == ALGO_CRYPTONIGHT && pool->keepalive) {
       timeout_keep_alive.tv_sec = 60;
@@ -5943,7 +5962,7 @@ static void *stratum_rthread(void *userdata)
     stratum_resumed(pool);
 
     applog(LOG_DEBUG, "%s: parsing %s...", __func__, s);
-    
+
     if (!parse_method(pool, s) && !parse_stratum_response(pool, s))
       applog(LOG_INFO, "Unknown stratum msg: %s", s);
     else if (pool->swork.clean) {
@@ -5952,16 +5971,21 @@ static void *stratum_rthread(void *userdata)
       /* Generate a single work item to update the current
        * block database */
       pool->swork.clean = false;
-      
+
       switch(pool->algorithm.type) {
         case ALGO_ETHASH:
-          gen_stratum_work_eth(pool, work);
+          // TODO: nicehash or not?
+          if (false) {
+            gen_stratum_work_eth(pool, work);
+          } else {
+            gen_stratum_work_ethash_nicehash(pool, work);
+          }
           break;
-        
+
         case ALGO_CRYPTONIGHT:
           gen_stratum_work_cn(pool, work);
           break;
-          
+
         default:
           gen_stratum_work(pool, work);
       }
@@ -6026,19 +6050,28 @@ static void *stratum_sthread(void *userdata)
       applog(LOG_DEBUG, "stratum_sthread() algorithm = %s", pool->algorithm.name);
 
       uint64_t tmp = bswap_64(work->Nonce);
-      char *ASCIIMixHash = bin2hex(work->mixhash, 32);
-      char *ASCIIPoWHash = bin2hex(work->data, 32);
-      char *ASCIINonce = bin2hex(&tmp, 8);
-
-      mutex_lock(&sshare_lock);
-      /* Give the stratum share a unique id */
-      sshare->id = swork_id++;
-      mutex_unlock(&sshare_lock);
-      snprintf(s, s_size, "{\"id\": %d, \"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"0x%s\", \"0x%s\", \"0x%s\"]}", sshare->id, pool->rpc_user, work->job_id, ASCIINonce, ASCIIPoWHash, ASCIIMixHash);
-
-      free(ASCIINonce);
-      free(ASCIIMixHash);
-      free(ASCIIPoWHash);
+      // TODO nicehash or not?
+      if (false) {
+        char *ASCIIMixHash = bin2hex(work->mixhash, 32);
+        char *ASCIIPoWHash = bin2hex(work->data, 32);
+        char *ASCIINonce = bin2hex(&tmp, 8);
+        mutex_lock(&sshare_lock);
+        /* Give the stratum share a unique id */
+        sshare->id = swork_id++;
+        mutex_unlock(&sshare_lock);
+        snprintf(s, s_size, "{\"id\": %d, \"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"0x%s\", \"0x%s\", \"0x%s\"]}", sshare->id, pool->rpc_user, work->job_id, ASCIINonce, ASCIIPoWHash, ASCIIMixHash);
+        free(ASCIINonce);
+        free(ASCIIMixHash);
+        free(ASCIIPoWHash);
+      } else {
+        char *ASCIINonce = bin2hex((char *)&tmp + pool->n1_len, pool->n2size + 4);
+        mutex_lock(&sshare_lock);
+        /* Give the stratum share a unique id */
+        sshare->id = swork_id++;
+        mutex_unlock(&sshare_lock);
+        snprintf(s, s_size, "{\"id\": %d, \"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"%s\"]}", sshare->id, pool->rpc_user, work->job_id, ASCIINonce);
+        free(ASCIINonce);
+      }
     }
     else if (pool->algorithm.type == ALGO_CRYPTONIGHT) {
       char *ASCIIResult;
@@ -6049,22 +6082,22 @@ static void *stratum_sthread(void *userdata)
       sshare->work = work;
 
       applog(LOG_DEBUG, "stratum_sthread() algorithm = %s", pool->algorithm.name);
-		
+
       char *ASCIINonce = bin2hex(&work->XMRNonce, 4);
-      
+
       ASCIIResult = bin2hex(work->hash, 32);
-       
+
       mutex_lock(&sshare_lock);
       /* Give the stratum share a unique id */
       sshare->id = swork_id++;
       mutex_unlock(&sshare_lock);
-      
+
       snprintf(s, s_size, "{\"method\": \"submit\", \"params\": {\"id\": \"%s\", \"job_id\": \"%s\", \"nonce\": \"%s\", \"result\": \"%s\"}, \"id\":%d}", pool->XMRAuthID, work->job_id, ASCIINonce, ASCIIResult, sshare->id);
 
       free(ASCIINonce);
       free(ASCIIResult);
     }
- 
+
     else if(pool->algorithm.type == ALGO_EQUIHASH) {
       char *nonce;
       char *solution;
@@ -6074,13 +6107,13 @@ static void *stratum_sthread(void *userdata)
       sshare->work = work;
 
       applog(LOG_DEBUG, "stratum_sthread() algorithm = %s", pool->algorithm.name);
-      
+
       //get nonce minus extranonce set by server
       nonce = bin2hex(work->equihash_data+108, 32);
       solution = bin2hex(work->equihash_data+140, 1347);
-      
+
       //applog(LOG_DEBUG, "%s: Nonce set to %s", __func__, nonce+strlen(work->nonce1));
-      
+
       mutex_lock(&sshare_lock);
       /* Give the stratum share a unique id */
       sshare->id = swork_id++;
@@ -6253,7 +6286,7 @@ retry_stratum:
 
       if (ret) {
         init_stratum_threads(pool);
-        
+
         if (pool->algorithm.type == ALGO_CRYPTONIGHT) {
           struct work *work = make_work();
           gen_stratum_work_cn(pool, work);
@@ -6655,6 +6688,71 @@ static void gen_stratum_work_eth(struct pool *pool, struct work *work)
 /* Generates stratum based work based on the most recent notify information
  * from the pool. This will keep generating work while a pool is down so we use
  * other means to detect when the pool has died in stratum_thread */
+static void gen_stratum_work_ethash_nicehash(struct pool *pool, struct work *work)
+{
+  //unsigned char tmpTarget[32];
+  uint32_t nonce2le;
+  if(pool->algorithm.type != ALGO_ETHASH)
+    return;
+  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - algorithm = %s", work->thr_id, pool->algorithm.name);
+  cg_rlock(&pool->data_lock);
+  work->eth_epoch = pool->eth_cache.current_epoch;
+  work->job_id = strdup(pool->swork.job_id);
+  work->nonce1 = strdup(pool->nonce1);
+  nonce2le = htole32(pool->nonce2);
+  uint8_t *p = (uint8_t *)&nonce2le;
+  switch (pool->n1_len) {
+    case 4:
+      p[0] = pool->nonce1bin[3];
+    case 3:
+      p[1] = pool->nonce1bin[2];
+    case 2:
+      p[2] = pool->nonce1bin[1];
+    case 1:
+      p[3] = pool->nonce1bin[0];
+  }
+  work->Nonce = (uint64_t) nonce2le << 32;
+  work->nonce2 = pool->nonce2++;
+  work->nonce2_len = pool->n2size;
+  memcpy(work->data, pool->EthWork, 32);
+  work->sdiff = pool->swork.diff;
+  work->work_difficulty = pool->swork.diff;
+  work->network_diff = pool->diff1;
+  cg_runlock(&pool->data_lock);
+  set_target(work->target, work->sdiff, pool->algorithm.diff_multiplier2, work->thr_id);
+
+  local_work++;
+  work->pool = pool;
+  work->stratum = true;
+  work->blk.nonce = 0;
+  work->id = total_work++;
+  work->longpoll = false;
+  work->getwork_mode = GETWORK_MODE_STRATUM;
+  work->work_block = work->data[0];
+  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - epoch %d", work->thr_id, work->eth_epoch);
+  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - jobid %s", work->thr_id, work->job_id);
+  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - pool nonce1 %s", work->thr_id, pool->nonce1);
+  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->sdiff = %u", work->thr_id, work->sdiff);
+  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->work_difficulty = %u", work->thr_id, work->work_difficulty);
+  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->network_diff = %u", work->thr_id, work->network_diff);
+  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->Nonce = %u", work->thr_id, work->Nonce);
+  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->nonce2 = %u", work->thr_id, work->nonce2);
+  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->nonce2_len = %u", work->thr_id, work->nonce2_len);
+  char *spethwork = bin2hex(pool->EthWork, 32);
+  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - pool->EthWork = %s", work->thr_id, spethwork);
+  char *swtarget = bin2hex(work->target, 32);
+  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->target = %s", work->thr_id, swtarget);
+  applog(LOG_DEBUG, "[THR%d] gen_stratum_work_ethash_nicehash() - work->work_block = %d", work->thr_id, work->work_block);
+  // Do not allow ntime rolling
+  work->drv_rolllimit = 0;
+
+  cgtime(&work->tv_staged);
+}
+
+
+/* Generates stratum based work based on the most recent notify information
+ * from the pool. This will keep generating work while a pool is down so we use
+ * other means to detect when the pool has died in stratum_thread */
 
 static void gen_stratum_work_cn(struct pool *pool, struct work *work)
 {
@@ -6662,8 +6760,8 @@ static void gen_stratum_work_cn(struct pool *pool, struct work *work)
     return;
 
   applog(LOG_DEBUG, "[THR%d] gen_stratum_work_cn() - algorithm = %s", work->thr_id, pool->algorithm.name);
-  
-  cg_rlock(&pool->data_lock);	
+
+  cg_rlock(&pool->data_lock);
   work->job_id = strdup(pool->swork.job_id);
   work->XMRTarget = pool->XMRTarget;
   //strcpy(work->XMRID, pool->XMRID);
@@ -6676,9 +6774,9 @@ static void gen_stratum_work_cn(struct pool *pool, struct work *work)
   work->work_difficulty = work->sdiff;
   work->network_diff = pool->diff1;
   cg_runlock(&pool->data_lock);
-  
+
   work->target[7] = work->XMRTarget;
-  
+
   local_work++;
   work->pool = pool;
   work->stratum = true;
@@ -6692,7 +6790,7 @@ static void gen_stratum_work_cn(struct pool *pool, struct work *work)
   work->drv_rolllimit = 0;
 
   cgtime(&work->tv_staged);
-  
+
   applog(LOG_DEBUG, "gen_stratum_work_cn() done.");
 }
 
@@ -6704,15 +6802,15 @@ static void gen_stratum_work_equihash(struct pool *pool, struct work *work)
 
   /* Downgrade to a read lock to read off the pool variables */
   cg_dwlock(&pool->data_lock);
-  
+
   /* equihash already has the merkle root in the header no need to change it */
   memset(work->equihash_data, 0, 1487);
   memcpy(work->equihash_data, pool->header_bin, 128);
-  
+
   //add pool extra nonce
   hex2bin(work->equihash_data + 108, pool->nonce1, strlen(pool->nonce1) / 2);
   memcpy(work->equihash_data + 108 + 20 - work->nonce2_len, &work->nonce2, work->nonce2_len);
- 
+
   //add solutionsize
   add_var_int(work->equihash_data + 140, 1344);
 
@@ -6759,7 +6857,7 @@ static void gen_stratum_work(struct pool *pool, struct work *work)
     gen_stratum_work_equihash(pool, work);
     return;
   }
-  
+
   unsigned char merkle_root[32], merkle_sha[64];
   uint32_t *data32, *swap32;
   uint64_t nonce2le;
@@ -6916,7 +7014,7 @@ static void apply_initial_gpu_settings(struct pool *pool)
   rd_lock(&mining_thr_lock);
 
   apply_switcher_options(options, pool);
-  
+
   //manually apply algorithm
   for (i = 0; i < nDevs; i++)
   {
@@ -7752,10 +7850,15 @@ static void hash_sole_work(struct thr_info *mythr)
     if (work->pool->algorithm.type == ALGO_NEOSCRYPT)
       set_target_neoscrypt(work->device_target, work->device_diff, work->thr_id);
     else if (work->pool->algorithm.type == ALGO_ETHASH) {
-      double mult = 60e6;
-      work->device_diff = MIN(work->work_difficulty, mult);
-      *(uint64_t*) (work->device_target + 24) = bits64 / work->device_diff;
-      work->device_diff /= mult;
+      // TODO: nicehash or not?
+      if (false) {
+        double mult = 60e6;
+        work->device_diff = MIN(work->work_difficulty, mult);
+        *(uint64_t*) (work->device_target + 24) = bits64 / work->device_diff;
+        work->device_diff /= mult;
+      } else {
+        set_target(work->device_target, work->device_diff, work->pool->algorithm.diff_multiplier2, work->thr_id);
+      }
     }
     else if (work->pool->algorithm.type != ALGO_EQUIHASH)
       set_target(work->device_target, work->device_diff, work->pool->algorithm.diff_multiplier2, work->thr_id);
@@ -9672,17 +9775,22 @@ retry:
 
       switch(pool->algorithm.type) {
         case ALGO_ETHASH:
-          gen_stratum_work_eth(pool, work);
+          // TODO: nicehash or not?
+          if (false) {
+            gen_stratum_work_eth(pool, work);
+          } else {
+            gen_stratum_work_ethash_nicehash(pool, work);
+          }
           break;
-          
+
         case ALGO_CRYPTONIGHT:
           gen_stratum_work_cn(pool, work);
           break;
-          
+
         default:
            gen_stratum_work(pool, work);
       }
- 
+
       applog(LOG_DEBUG, "Generated stratum work");
       stage_work(work);
       continue;

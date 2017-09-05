@@ -2262,7 +2262,7 @@ static bool parse_extranonce(struct pool *pool, json_t *val)
   }
   if (pool->algorithm.type == ALGO_ETHASH) {
     // TODO nicehash or not? fallthrough for not
-    if (true) {
+    if (pool->nicehash_stratum_compat) {
      return parse_extranonce_ethash_nicehash(pool, val);
     }
   }
@@ -2433,10 +2433,10 @@ bool parse_method(struct pool *pool, char *s)
   if (!strncasecmp(buf, "mining.notify", 13)) {
     if (pool->algorithm.type == ALGO_ETHASH) {
       // TODO nicehash or not?
-      if (false) {
-        ret = parse_notify_ethash(pool, params);
-      } else {
+      if (pool->nicehash_stratum_compat) {
         ret = parse_notify_ethash_nicehash(pool, params);
+      } else {
+        ret = parse_notify_ethash(pool, params);
       }
     }
     else {
@@ -3191,7 +3191,7 @@ resend:
     pool->swork.diff = 1;
 
     // TODO nicehash or not?
-    if (false) {
+    if (!pool->nicehash_stratum_compat) {
       pool->sessionid = NULL;
       pool->nonce1 = NULL;
       pool->n1_len = 0;

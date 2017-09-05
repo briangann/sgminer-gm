@@ -626,7 +626,6 @@ struct pool *add_pool(void)
   // (which can cause serious issues with things like P2Pool)
   // to true by default - set it to what it should be - false
   // unless enabled explicitly.
-  // TODO: nicehash or not? default needs to be false
   pool->extranonce_subscribe = false;
 
   pool->description = "";
@@ -3342,7 +3341,7 @@ static bool submit_upstream_work(struct work *work, CURL *curl, char *curl_err_s
 
     // TODO: nicehash or not?
     char *ASCIINonce = bin2hex(&tmp, 8);
-    if (true) {
+    if (work->pool->nicehash_stratum_compat) {
       ASCIINonce = bin2hex((char *)&tmp + pool->n1_len, pool->n2size + 4);
     }
 	  snprintf(s, 128 + 16 + 512, "{\"jsonrpc\":\"2.0\", \"method\":\"eth_submitWork\", \"params\":[\"0x%s\", \"0x%s\", \"0x%s\"],\"id\":1}", ASCIINonce, ASCIIPoWHash, ASCIIMixHash);
@@ -4372,17 +4371,17 @@ static double share_diff(const struct work *work)
     uint8_t tmp[32];
     swab256(tmp, work->hash);
     // TODO: nicehash or not?
-    if (false) {
-      ret = eth2pow256 / (le256todouble(tmp) + 1.);
-      uint64_t le_target = *(uint64_t*) (work->target + 24);
-      if (*(uint64_t*) (tmp + 24) > le_target)
-        return ret;
-    } else {
+    if (work->pool->nicehash_stratum_compat) {
       d64 = work->pool->algorithm.share_diff_multiplier * truediffone;
       // TODO: maybe just use work->hash without the swapbytes and leave the algorithm.c alone?
       // s64 = le256todouble(work->hash);
       s64 = le256todouble(tmp);
       ret = d64 / (s64 + 1.);
+    } else {
+      ret = eth2pow256 / (le256todouble(tmp) + 1.);
+      uint64_t le_target = *(uint64_t*) (work->target + 24);
+      if (*(uint64_t*) (tmp + 24) > le_target)
+        return ret;
     }
   }
   else {
@@ -5980,10 +5979,10 @@ static void *stratum_rthread(void *userdata)
       switch(pool->algorithm.type) {
         case ALGO_ETHASH:
           // TODO: nicehash or not?
-          if (false) {
-            gen_stratum_work_eth(pool, work);
-          } else {
+          if (pool->nicehash_stratum_compat) {
             gen_stratum_work_ethash_nicehash(pool, work);
+          } else {
+            gen_stratum_work_eth(pool, work);
           }
           break;
 
@@ -6056,7 +6055,15 @@ static void *stratum_sthread(void *userdata)
 
       uint64_t tmp = bswap_64(work->Nonce);
       // TODO nicehash or not?
-      if (false) {
+      if (pool->nicehash_stratum_compat) {
+        char *ASCIINonce = bin2hex((char *)&tmp + pool->n1_len, pool->n2size + 4);
+        mutex_lock(&sshare_lock);
+        /* Give the stratum share a unique id */
+        sshare->id = swork_id++;
+        mutex_unlock(&sshare_lock);
+        snprintf(s, s_size, "{\"id\": %d, \"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"%s\"]}", sshare->id, pool->rpc_user, work->job_id, ASCIINonce);
+        free(ASCIINonce);
+      } else {
         char *ASCIIMixHash = bin2hex(work->mixhash, 32);
         char *ASCIIPoWHash = bin2hex(work->data, 32);
         char *ASCIINonce = bin2hex(&tmp, 8);
@@ -6068,14 +6075,6 @@ static void *stratum_sthread(void *userdata)
         free(ASCIINonce);
         free(ASCIIMixHash);
         free(ASCIIPoWHash);
-      } else {
-        char *ASCIINonce = bin2hex((char *)&tmp + pool->n1_len, pool->n2size + 4);
-        mutex_lock(&sshare_lock);
-        /* Give the stratum share a unique id */
-        sshare->id = swork_id++;
-        mutex_unlock(&sshare_lock);
-        snprintf(s, s_size, "{\"id\": %d, \"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"%s\"]}", sshare->id, pool->rpc_user, work->job_id, ASCIINonce);
-        free(ASCIINonce);
       }
     }
     else if (pool->algorithm.type == ALGO_CRYPTONIGHT) {
@@ -7856,7 +7855,7 @@ static void hash_sole_work(struct thr_info *mythr)
       set_target_neoscrypt(work->device_target, work->device_diff, work->thr_id);
     else if (work->pool->algorithm.type == ALGO_ETHASH) {
       // TODO: nicehash or not?
-      if (false) {
+      if (!work->pool->nicehash_stratum_compat) {
         double mult = 60e6;
         work->device_diff = MIN(work->work_difficulty, mult);
         *(uint64_t*) (work->device_target + 24) = bits64 / work->device_diff;
@@ -9781,10 +9780,10 @@ retry:
       switch(pool->algorithm.type) {
         case ALGO_ETHASH:
           // TODO: nicehash or not?
-          if (false) {
-            gen_stratum_work_eth(pool, work);
-          } else {
+          if (pool->nicehash_stratum_compat) {
             gen_stratum_work_ethash_nicehash(pool, work);
+          } else {
+            gen_stratum_work_eth(pool, work);
           }
           break;
 

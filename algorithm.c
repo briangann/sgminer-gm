@@ -1055,131 +1055,16 @@ static cl_int queue_ethash_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_u
     cg_iunlock(&pool->data_lock);
   }
 
-  if (false) {
+  // TODO: nicehash or not
+  if (!pool->nicehash_stratum_compat) {
     memcpy(&le_target, blk->work->device_target + 24, 8);
     mutex_lock(&eth_nonce_lock);
     HighNonce = eth_nonce++;
     blk->work->Nonce = (cl_ulong) HighNonce << 32;
     mutex_unlock(&eth_nonce_lock);
   } else {
-    // TODO: nicehash or not
     le_target = *(cl_ulong *)(blk->work->device_target + 24);
   }
-  num = 0;
-  kernel = &clState->kernel;
-
-  // Not nodes now (64 bytes), but DAG entries (128 bytes)
-  cl_ulong DAGSize = EthGetDAGSize(blk->work->eth_epoch);
-  cl_uint ItemsArg = DAGSize / 128;
-
-  // DO NOT flip80.
-  status |= clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, true, 0, 32, blk->work->data, 0, NULL, NULL);
-
-  CL_SET_ARG(clState->outputBuffer);
-  CL_SET_ARG(clState->CLbuffer0);
-  CL_SET_ARG(dag->dag_buffer);
-  CL_SET_ARG(ItemsArg);
-  CL_SET_ARG(blk->work->Nonce);
-  CL_SET_ARG(le_target);
-  CL_SET_ARG(Isolate);
-
-  if (status != CL_SUCCESS)
-    cg_runlock(&dag->lock);
-  return status;
-}
-
-static cl_int queue_ethash_nicehash_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_unused cl_uint threads)
-{
-  struct pool *pool = blk->work->pool;
-  eth_dag_t *dag;
-  cl_kernel *kernel;
-  unsigned int num = 0;
-  cl_int status = 0;
-  cl_ulong le_target;
-  cl_uint HighNonce, Isolate = UINT32_MAX;
-
-  cg_ilock(&pool->data_lock);
-  if (pool->eth_cache.disabled || pool->eth_cache.dag_cache == NULL) {
-    cg_iunlock(&pool->data_lock);
-    cgsleep_ms(200);
-    applog(LOG_DEBUG, "THR[%d]: stop ETHASH mining", blk->work->thr_id);
-    return 1;
-  }
-  dag = &blk->work->thr->cgpu->eth_dag;
-  cg_ilock(&dag->lock);
-  if (dag->current_epoch != blk->work->eth_epoch) {
-    cl_ulong CacheSize = EthGetCacheSize(blk->work->eth_epoch);
-    cg_ulock(&dag->lock);
-    if (dag->dag_buffer == NULL || blk->work->eth_epoch > dag->max_epoch) {
-      if (dag->dag_buffer != NULL) {
-	cg_dlock(&pool->data_lock);
-        clReleaseMemObject(dag->dag_buffer);
-      }
-      else {
-	cg_ulock(&pool->data_lock);
-	int size = ++pool->eth_cache.nDevs;
-	pool->eth_cache.dags = (eth_dag_t **) realloc(pool->eth_cache.dags, sizeof(void*) * size);
-	pool->eth_cache.dags[size-1] = dag;
-	dag->pool = pool;
-	cg_dwlock(&pool->data_lock);
-      }
-      dag->max_epoch = blk->work->eth_epoch + eth_future_epochs;
-      dag->dag_buffer = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, EthGetDAGSize(dag->max_epoch), NULL, &status);
-      if (status != CL_SUCCESS) {
-	cg_runlock(&pool->data_lock);
-	dag->max_epoch = 0;
-	dag->dag_buffer = NULL;
-	cg_wunlock(&dag->lock);
-	applog(LOG_ERR, "Error %d: Creating the DAG buffer failed.", status);
-	return status;
-      }
-    }
-    else
-      cg_dlock(&pool->data_lock);
-
-    applog(LOG_DEBUG, "DAG being regenerated.");
-    cl_mem eth_cache = clCreateBuffer(clState->context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, CacheSize, pool->eth_cache.dag_cache, &status);
-    cg_runlock(&pool->data_lock);
-    if (status != CL_SUCCESS) {
-      clReleaseMemObject(eth_cache);
-      cg_wunlock(&dag->lock);
-      applog(LOG_ERR, "Error %d: Creating the ethash cache buffer failed.", status);
-      return status;
-    }
-
-    // enqueue DAG gen kernel
-    kernel = &clState->GenerateDAG;
-
-    cl_uint zero = 0;
-    cl_uint CacheSize64 = CacheSize / 64;
-
-    CL_SET_ARG(zero);
-    CL_SET_ARG(eth_cache);
-    CL_SET_ARG(dag->dag_buffer);
-    CL_SET_ARG(CacheSize64);
-    CL_SET_ARG(Isolate);
-
-    cl_ulong DAGSize = EthGetDAGSize(blk->work->eth_epoch);
-    size_t DAGItems = (size_t) (DAGSize / 64);
-    status |= clEnqueueNDRangeKernel(clState->commandQueue, clState->GenerateDAG, 1, NULL, &DAGItems, NULL, 0, NULL, NULL);
-    clFinish(clState->commandQueue);
-
-    clReleaseMemObject(eth_cache);
-    if (status != CL_SUCCESS) {
-      cg_wunlock(&dag->lock);
-      applog(LOG_ERR, "Error %d: Setting args for the DAG kernel and/or executing it.", status);
-      return status;
-    }
-    dag->current_epoch = blk->work->eth_epoch;
-    cg_dwlock(&dag->lock);
-  }
-  else {
-    cg_dlock(&dag->lock);
-    cg_iunlock(&pool->data_lock);
-  }
-
-  le_target = *(cl_ulong *)(blk->work->device_target + 24);
-
   num = 0;
   kernel = &clState->kernel;
 
@@ -1417,7 +1302,6 @@ static algorithm_settings_t algos[] = {
   { "ethash",     ALGO_ETHASH,   "", 1, 1, 1, 0, 0, 0xFF, 0xFFFF000000000000ULL, 0x000000FFUL, 0, 128, 0, ethash_regenhash, NULL, queue_ethash_kernel, gen_hash, append_ethash_compiler_options },
   { "ethash-genoil",     ALGO_ETHASH,   "", 1, 1, 1, 0, 0, 0xFF, 0xFFFF000000000000ULL, 0x000000FFUL, 0, 128, 0, ethash_regenhash, NULL, queue_ethash_kernel, gen_hash, append_ethash_compiler_options },
   { "ethash-new",     ALGO_ETHASH,   "", 1, 1, 1, 0, 0, 0xFF, 0xFFFF000000000000ULL, 0x000000FFUL, 0, 128, 0, ethash_regenhash, NULL, queue_ethash_kernel, gen_hash, append_ethash_compiler_options },
-  { "ethash-new-nicehash",     ALGO_ETHASH,   "", 1, 1, 1, 0, 0, 0xFF, 0xFFFF000000000000ULL, 0x000000FFUL, 0, 128, 0, ethash_regenhash, NULL, queue_ethash_nicehash_kernel, gen_hash, append_ethash_compiler_options },
 
   { "cryptonight", ALGO_CRYPTONIGHT, "", (1ULL << 32), (1ULL << 32), (1ULL << 32), 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 6, 0, 0, cryptonight_regenhash, NULL, queue_cryptonight_kernel, gen_hash, NULL },
 

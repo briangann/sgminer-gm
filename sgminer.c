@@ -627,11 +627,7 @@ struct pool *add_pool(void)
   // to true by default - set it to what it should be - false
   // unless enabled explicitly.
   // TODO: nicehash or not? default needs to be false
-  if (false) {
-    pool->extranonce_subscribe = false;
-  } else {
-    pool->extranonce_subscribe = true;
-  }
+  pool->extranonce_subscribe = false;
 
   pool->description = "";
 
@@ -818,6 +814,8 @@ bool detect_stratum(struct pool *pool, char *url)
   if (!strncasecmp(url, "stratum+tcp://", 14)) {
     pool->rpc_url = strdup(url);
     pool->has_stratum = true;
+    // TODO: nicehash or not
+    pool->extranonce_subscribe = true;
     pool->stratum_url = pool->sockaddr_url;
     return true;
   }

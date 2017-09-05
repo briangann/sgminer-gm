@@ -1055,12 +1055,16 @@ static cl_int queue_ethash_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_u
     cg_iunlock(&pool->data_lock);
   }
 
-  memcpy(&le_target, blk->work->device_target + 24, 8);
-  mutex_lock(&eth_nonce_lock);
-  HighNonce = eth_nonce++;
-  blk->work->Nonce = (cl_ulong) HighNonce << 32;
-  mutex_unlock(&eth_nonce_lock);
-
+  if (false) {
+    memcpy(&le_target, blk->work->device_target + 24, 8);
+    mutex_lock(&eth_nonce_lock);
+    HighNonce = eth_nonce++;
+    blk->work->Nonce = (cl_ulong) HighNonce << 32;
+    mutex_unlock(&eth_nonce_lock);
+  } else {
+    // TODO: nicehash or not
+    le_target = *(cl_ulong *)(blk->work->device_target + 24);
+  }
   num = 0;
   kernel = &clState->kernel;
 

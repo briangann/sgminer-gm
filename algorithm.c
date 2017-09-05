@@ -1057,12 +1057,14 @@ static cl_int queue_ethash_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_u
 
   // TODO: nicehash or not
   if (!pool->nicehash_stratum_compat) {
+    applog(LOG_DEBUG, "ETHASH ALGORITHM: Using HighNonce instead of nicehash");
     memcpy(&le_target, blk->work->device_target + 24, 8);
     mutex_lock(&eth_nonce_lock);
     HighNonce = eth_nonce++;
     blk->work->Nonce = (cl_ulong) HighNonce << 32;
     mutex_unlock(&eth_nonce_lock);
   } else {
+    applog(LOG_DEBUG, "ETHASH ALGORITHM: Using nicehash nonce");
     le_target = *(cl_ulong *)(blk->work->device_target + 24);
   }
   num = 0;

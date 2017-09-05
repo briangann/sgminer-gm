@@ -815,6 +815,7 @@ bool detect_stratum(struct pool *pool, char *url)
     pool->has_stratum = true;
     // TODO: nicehash or not
     pool->nicehash_stratum_compat = false;
+    pool->extranonce_subscribe = false;
     if (strstr(url, "nicehash.com")) {
       pool->nicehash_stratum_compat = true;
       // force this to true or nothing will work with nicehash
@@ -7856,6 +7857,7 @@ static void hash_sole_work(struct thr_info *mythr)
     else if (work->pool->algorithm.type == ALGO_ETHASH) {
       // TODO: nicehash or not?
       if (!work->pool->nicehash_stratum_compat) {
+        applog(LOG_DEBUG, "hash_sole_work(): Using HighNonce");
         double mult = 60e6;
         work->device_diff = MIN(work->work_difficulty, mult);
         *(uint64_t*) (work->device_target + 24) = bits64 / work->device_diff;

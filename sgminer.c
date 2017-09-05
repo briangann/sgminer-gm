@@ -815,7 +815,14 @@ bool detect_stratum(struct pool *pool, char *url)
     pool->rpc_url = strdup(url);
     pool->has_stratum = true;
     // TODO: nicehash or not
-    pool->extranonce_subscribe = true;
+    pool->nicehash_stratum_compat = false;
+    if (strstr(url, "nicehash.com")) {
+      pool->nicehash_stratum_compat = true;
+      // force this to true or nothing will work with nicehash
+      pool->extranonce_subscribe = true;
+      applog(LOG_INFO,"NICEHASH Stratum Detected");
+      return true;
+    }
     pool->stratum_url = pool->sockaddr_url;
     return true;
   }

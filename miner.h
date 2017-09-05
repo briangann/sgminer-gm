@@ -624,7 +624,7 @@ struct cgpu_info {
   bool has_adl;
   struct gpu_adl adl;
   gpu_sysfs_info sysfs_info;
-  
+
   int gpu_engine;
   int min_engine;
   int gpu_fan;
@@ -633,7 +633,7 @@ struct cgpu_info {
   int gpu_memdiff;
   int gpu_powertune;
   float gpu_vddc;
-  
+
   double diff1;
   double diff_accepted;
   double diff_rejected;
@@ -1362,7 +1362,7 @@ struct pool {
   uint8_t Target[32];
   uint8_t EthWork[32];
   uint8_t NetDiff[32];
-  
+
   //XMR stuff
   char XMRAuthID[64];
   uint32_t XMRTarget;
@@ -1370,7 +1370,7 @@ struct pool {
   uint8_t XMRBlob[128];
   pthread_mutex_t XMRGlobalNonceLock;
   uint32_t XMRGlobalNonce;
-  
+
   double diff_accepted;
   double diff_rejected;
   double diff_stale;
@@ -1450,6 +1450,7 @@ struct pool {
 
   /* Stratum variables */
   bool has_stratum;
+  bool nicehash_stratum_compat;
   char *stratum_url;
   char *stratum_port;
   struct addrinfo stratum_hints;
@@ -1526,14 +1527,14 @@ struct work {
 
   uint32_t eth_epoch;
   uint64_t Nonce;
-  
+
   /* cryptonight stuff */
   uint32_t XMRTarget;
   uint32_t XMRBlobLen;
   uint8_t XMRBlob[128];
-    
+
   uint32_t XMRNonce;
-  
+
   unsigned char equihash_data[1487];
 
   int   rolls;

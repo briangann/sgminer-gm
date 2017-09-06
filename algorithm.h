@@ -16,6 +16,7 @@ typedef enum {
   ALGO_CRE,
   ALGO_SCRYPT,
   ALGO_NSCRYPT,
+  ALGO_PASCAL,
   ALGO_X11,
   ALGO_X13,
   ALGO_X14,
@@ -36,7 +37,11 @@ typedef enum {
   ALGO_YESCRYPT_MULTI,
   ALGO_BLAKECOIN,
   ALGO_BLAKE,
+  ALGO_SIA,
+  ALGO_DECRED,
   ALGO_VANILLA,
+  ALGO_LBRY,
+  ALGO_SIBCOIN 
   ALGO_ETHASH,
   ALGO_CRYPTONIGHT,
   ALGO_EQUIHASH
@@ -74,7 +79,8 @@ typedef struct _algorithm_t {
   long rw_buffer_size;
   cl_command_queue_properties cq_properties;
   void(*regenhash)(struct work *);
-  void(*precalc_hash)(struct _dev_blk_ctx *, uint32_t *, uint32_t *);
+  void(*calc_midstate)(struct work *);
+  void(*prepare_work)(struct _dev_blk_ctx *, uint32_t *, uint32_t *);
   cl_int(*queue_kernel)(struct __clState *, struct _dev_blk_ctx *, cl_uint);
   void(*gen_hash)(const unsigned char *, unsigned int, unsigned char *);
   void(*set_compile_options)(struct _build_kernel_data *, struct cgpu_info *, struct _algorithm_t *);
@@ -97,7 +103,8 @@ typedef struct _algorithm_settings_t
 	long rw_buffer_size;
 	cl_command_queue_properties cq_properties;
 	void     (*regenhash)(struct work *);
-	void     (*precalc_hash)(struct _dev_blk_ctx *, uint32_t *, uint32_t *);
+	void     (*calc_midstate)(struct work *);
+	void     (*prepare_work)(struct _dev_blk_ctx *, uint32_t *, uint32_t *);
 	cl_int   (*queue_kernel)(struct __clState *, struct _dev_blk_ctx *, cl_uint);
 	void     (*gen_hash)(const unsigned char *, unsigned int, unsigned char *);
 	void     (*set_compile_options)(build_kernel_data *, struct cgpu_info *, algorithm_t *);

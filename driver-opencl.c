@@ -1366,7 +1366,7 @@ static bool opencl_prepare_work(struct thr_info __maybe_unused *thr, struct work
 {
   work->blk.work = work;
   if (work->pool->algorithm.precalc_hash)
-    work->pool->algorithm.precalc_hash(&work->blk, 0, (uint32_t *)(work->data));
+    work->pool->algorithm.precalc_hash(&work->blk, (uint32_t *)(work->midstate), (uint32_t *)(work->data));
   thr->pool_no = work->pool->pool_no;
 
   return true;

@@ -128,6 +128,7 @@ int nDevs;
 int opt_dynamic_interval = 7;
 int opt_g_threads = -1;
 bool opt_restart = true;
+int opt_vote = 0;
 
 /*****************************************
  * Xn Algorithm options
@@ -1872,6 +1873,9 @@ struct opt_table opt_config_table[] = {
   OPT_WITHOUT_ARG("--verbose|-v",
       opt_set_bool, &opt_verbose,
       "Log verbose output to stderr as well as status output"),
+  OPT_WITH_ARG("--vote",
+      set_int_1_to_65535, opt_show_intval, &opt_vote,
+      "Optional vote value for decred blocks"),
   OPT_WITH_ARG("--watchpool-refresh",
       set_int_1_to_65535, opt_show_intval, &opt_watchpool_refresh,
       "Interval in seconds to refresh pool status"),
@@ -2171,20 +2175,33 @@ static void update_gbt(struct pool *pool)
 /* Return the work coin/network difficulty */
 static double get_work_blockdiff(const struct work *work)
 {
+  uint32_t* data = (uint32_t*) work->data;
   uint64_t diff64;
   double numerator;
+  int powdiff;
+  uint8_t shift;
 
   // Neoscrypt has the data reversed
   if (work->pool->algorithm.type == ALGO_NEOSCRYPT) {
     diff64 = bswap_64(((uint64_t)(be32toh(*((uint32_t *)(work->data + 72))) & 0xFFFFFF00)) << 8);
     numerator = (double)work->pool->algorithm.diff_numerator;
-  }
-  if (work->pool->algorithm.type == ALGO_ETHASH) {
+  } else if (work->pool->algorithm.type == ALGO_ETHASH) {
     return 0;//work->network_diff;
   }
+  else if (work->pool->algorithm.type == ALGO_DECRED) {
+    shift = work->data[116+3];
+    powdiff = (8 * (0x1d - 3)) - (8 * (shift - 3));
+    diff64 = data[29] & 0xFFFFFF;
+    if (!diff64) diff64 = 1;
+    double d = (double)work->pool->algorithm.diff_numerator / (double)diff64;
+    for (int m = shift; m < 29; m++) d *= 256.0;
+    for (int m = 29; m < shift; m++) d /= 256.0;
+    if (shift == 28) d *= 256.0; // testnet
+    return d;
+  }
   else {
-    uint8_t pow = work->data[72];
-    int powdiff = (8 * (0x1d - 3)) - (8 * (pow - 3));;
+    shift = work->data[72];
+    powdiff = (8 * (0x1d - 3)) - (8 * (shift - 3));;
     diff64 = be32toh(*((uint32_t *)(work->data + 72))) & 0x0000000000FFFFFF;
     numerator = work->pool->algorithm.diff_numerator << powdiff;
   }
@@ -2475,6 +2492,7 @@ static bool getwork_decode(json_t *res_val, struct work *work)
 {
   size_t worklen = 128;
   worklen = ((work->pool->algorithm.type == ALGO_CRE) ? sizeof(work->data) : worklen);
+  if (work->pool->algorithm.type == ALGO_DECRED) worklen = 192;  
   if (unlikely(!jobj_binary(res_val, "data", work->data, worklen, true))) {
     if (opt_morenotices)
       applog(LOG_ERR, "%s: JSON inval data", isnull(get_pool_name(work->pool), ""));
@@ -2496,6 +2514,13 @@ static bool getwork_decode(json_t *res_val, struct work *work)
     if (opt_morenotices)
       applog(LOG_ERR, "%s: JSON inval target", isnull(get_pool_name(work->pool), ""));
     return false;
+  }
+  if (work->pool->algorithm.type == ALGO_DECRED) {
+    uint16_t vote = (uint16_t) (opt_vote << 1) | 1;
+    memcpy(&work->data[100], &vote, 2);
+    // some random extradata to make it unique
+    ((uint32_t*)work->data)[36] = (rand()*4);
+    ((uint32_t*)work->data)[37] = (rand()*4) << 8 | work->thr_id;
   }
   return true;
 }

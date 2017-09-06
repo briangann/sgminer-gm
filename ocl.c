@@ -927,7 +927,7 @@ out:
   size_t buf1size;
   size_t buf3size;
   size_t buf2size;
-  size_t readbufsize;
+  size_t readbufsize = 128;
   switch (algorithm->type) {
     case ALGO_CRE:
       readbufsize = 168;
@@ -935,6 +935,12 @@ out:
     case ALGO_ETHASH:
       readbufsize = 32;
       break;
+    case ALGO_DECRED:
+      readbufsize = 192;
+    case ALGO_LBRY:
+      readbufsize = 112;
+    case ALGO_PASCAL:
+      readbufsize = 196;
     default:
       readbufsize = 128;
   }

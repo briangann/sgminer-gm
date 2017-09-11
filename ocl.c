@@ -932,6 +932,9 @@ out:
     case ALGO_CRE:
       readbufsize = 168;
       break;
+    case ALGO_DECRED:
+      readbufsize = 192;
+      break;
     case ALGO_ETHASH:
       readbufsize = 32;
       break;

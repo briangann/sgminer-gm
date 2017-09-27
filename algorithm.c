@@ -1204,53 +1204,140 @@ static cl_int queue_decred_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_u
 
 #define WORKSIZE clState->wsize
 
-static cl_int queue_equihash_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_unused cl_uint threads)
+static cl_int queue_equihash_kernel_generic(_clState *clState, dev_blk_ctx *blk, __maybe_unused cl_uint device_thread, int param_n, int param_k)
 {
-  cl_int status = 0;
-  size_t work_items = threads;
-  size_t worksize = clState->wsize;
+    cl_int status = 0;
+    size_t work_items;
+    size_t worksize = clState->wsize;
+    int    nr_inputs = NR_INPUTS(param_n, param_k);
 
-  uint64_t mid_hash[8];
-  equihash_calc_mid_hash(mid_hash, blk->work->equihash_data);
-  status = clEnqueueWriteBuffer(clState->commandQueue, clState->MidstateBuf, CL_TRUE, 0, sizeof(mid_hash), mid_hash, 0, NULL, NULL);
-  uint32_t dbg[2] = {0};
-  status |= clEnqueueWriteBuffer(clState->commandQueue, clState->padbuffer8, CL_TRUE, 0, sizeof(dbg), &dbg, 0, NULL, NULL);
+    uint64_t mid_hash[8];
+    equihash_calc_mid_hash(mid_hash, blk->work->equihash_data);
+    status = clEnqueueWriteBuffer(clState->commandQueue, clState->MidstateBuf, CL_TRUE, 0, sizeof(mid_hash), mid_hash, 0, NULL, NULL);
+    //uint32_t dbg[2] = { 0 };
+    //status |= clEnqueueWriteBuffer(clState->commandQueue, clState->padbuffer8, CL_TRUE, 0, sizeof(dbg), &dbg, 0, NULL, NULL);
 
-  cl_mem rowCounters[2] = {clState->buffer2, clState->buffer3};
-  for (int round = 0; round < PARAM_K; round++) {
-    size_t global_ws = RC_SIZE;
-    size_t local_ws = 256;
+    cl_mem buf_ht[9] = {
+        clState->CLbuffer0,
+        clState->buffer1,
+        clState->buffer4,
+        clState->buffer5,
+        clState->buffer6,
+        clState->buffer7,
+        clState->buffer8,
+        clState->buffer9,
+        clState->buffer10,
+    };
+    cl_mem row_counters[2] = { clState->buffer2, clState->buffer3 };
+    cl_mem buf_potential_sols = clState->buffer11;
+    cl_uint round;
+    for (round = 0; round < param_k; round++) {
+        unsigned int num = 0;
+        cl_kernel *kernel = &clState->extra_kernels[0];
+        CL_SET_VARG(1, &device_thread);
+        CL_SET_VARG(1, &round);
+        CL_SET_ARG(buf_ht[round]);
+        CL_SET_ARG(row_counters[(round + 1) % 2]);
+        CL_SET_ARG(row_counters[round % 2]);
+        CL_SET_ARG(clState->outputBuffer);
+        CL_SET_ARG(buf_potential_sols);
+        CL_SET_ARG(clState->padbuffer8);
+        worksize = 256;
+        work_items = (MAX_NR_ROWS + ROWS_PER_UINT - 1) / ROWS_PER_UINT;
+        if (work_items % worksize)
+            work_items += worksize - work_items % worksize;
+        status |= clEnqueueNDRangeKernel(clState->commandQueue, *kernel, 1, NULL, &work_items, &worksize, 0, NULL, NULL);
+
+        num = 0;
+        kernel = &clState->extra_kernels[1 + round];
+        if (!round) {
+            CL_SET_VARG(1, &device_thread);
+            CL_SET_ARG(clState->MidstateBuf);
+            CL_SET_ARG(buf_ht[round]);
+            CL_SET_ARG(row_counters[round % 2]);
+            worksize = LOCAL_WORK_SIZE_ROUND0;
+            work_items = nr_inputs;
+        } else {
+            CL_SET_VARG(1, &device_thread);
+            CL_SET_ARG(buf_ht[(round - 1)]);
+            CL_SET_ARG(buf_ht[round]);
+            CL_SET_ARG(row_counters[(round - 1) % 2]);
+            CL_SET_ARG(row_counters[round % 2]);
+            worksize = (round == 8) ? LOCAL_WORK_SIZE_ROUND8 : LOCAL_WORK_SIZE;
+            work_items = _NR_ROWS(round - 1) * worksize;
+        }
+        CL_SET_ARG(clState->padbuffer8);
+        if (work_items % worksize)
+            work_items += worksize - work_items % worksize;
+        cl_event enqueue_event;
+#ifdef _MSC_VER
+        status |= clEnqueueNDRangeKernel(clState->commandQueue, *kernel, 1, NULL, &work_items, &worksize, 0, NULL, (round == 7) ? &enqueue_event : NULL);
+        
+        if (round == 0) {
+            mutex_lock(&blk->work->thr->cgpu->memory_transfer_lock);
+        } else if (round == 7) {
+            clWaitForEvents(1, &enqueue_event);
+            mutex_unlock(&blk->work->thr->cgpu->memory_transfer_lock);
+            clReleaseEvent(enqueue_event);
+        }
+#else
+        status |= clEnqueueNDRangeKernel(clState->commandQueue, *kernel, 1, NULL, &work_items, &worksize, 0, NULL, NULL);
+#endif
+    }
+
     unsigned int num = 0;
     cl_kernel *kernel = &clState->extra_kernels[0];
-    // Now on every round!!!!
-    CL_SET_ARG(clState->index_buf[round]);
-    CL_SET_ARG(rowCounters[round % 2]);
+    CL_SET_VARG(1, &device_thread);
+    CL_SET_VARG(1, &round);
+    CL_SET_ARG(buf_ht[0]);
+    CL_SET_ARG(row_counters[(round + 1) % 2]);
+    CL_SET_ARG(row_counters[round % 2]);
     CL_SET_ARG(clState->outputBuffer);
-    CL_SET_ARG(clState->CLbuffer0);
-    status |= clEnqueueNDRangeKernel(clState->commandQueue, *kernel, 1, NULL, &global_ws, &local_ws, 0, NULL, NULL);
+    CL_SET_ARG(buf_potential_sols);
+    CL_SET_ARG(clState->padbuffer8);
+    worksize = 256;
+    work_items = (MAX_NR_ROWS + ROWS_PER_UINT - 1) / ROWS_PER_UINT;
+    if (work_items % worksize)
+        work_items += worksize - work_items % worksize;
+    status |= clEnqueueNDRangeKernel(clState->commandQueue, *kernel, 1, NULL, &work_items, &worksize, 0, NULL, NULL);
 
-    kernel = &clState->extra_kernels[1 + round];
-    if (!round) {
-      worksize = LOCAL_WORK_SIZE_ROUND0;
-      work_items = NR_INPUTS / ROUND0_INPUTS_PER_WORK_ITEM;
-    }
-    else {
-      worksize = LOCAL_WORK_SIZE;
-      work_items = NR_ROWS * worksize;
-    }
-    status |= clEnqueueNDRangeKernel(clState->commandQueue, clState->extra_kernels[1 + round], 1, NULL, &work_items, &worksize, 0, NULL, NULL);
-  }
+    num = 0;
+    kernel = &clState->extra_kernels[1 + 8 + 1];
+    CL_SET_VARG(1, &device_thread);
+    CL_SET_ARG(buf_ht[param_k - 1]);
+    CL_SET_ARG(buf_potential_sols);
+    CL_SET_ARG(row_counters[0]);
+    worksize = LOCAL_WORK_SIZE_POTENTIAL_SOLS;
+    work_items = _NR_ROWS(param_k - 1) * worksize;
+    status |= clEnqueueNDRangeKernel(clState->commandQueue, clState->extra_kernels[1 + 8 + 1], 1, NULL, &work_items, &worksize, 0, NULL, NULL);
 
-  worksize = LOCAL_WORK_SIZE_POTENTIAL_SOLS;
-  work_items = NR_ROWS * worksize;
-  status |= clEnqueueNDRangeKernel(clState->commandQueue, clState->extra_kernels[1 + 9], 1, NULL, &work_items, &worksize, 0, NULL, NULL);
+    num = 0;
+    kernel = &clState->kernel;
+    CL_SET_ARG(buf_ht[0]);
+    CL_SET_ARG(buf_ht[1]);
+    CL_SET_ARG(clState->outputBuffer);
+    CL_SET_ARG(row_counters[0]);
+    CL_SET_ARG(row_counters[1]);
+    CL_SET_ARG(buf_ht[2]);
+    CL_SET_ARG(buf_ht[3]);
+    CL_SET_ARG(buf_ht[4]);
+    CL_SET_ARG(buf_ht[5]);
+    CL_SET_ARG(buf_ht[6]);
+    CL_SET_ARG(buf_ht[7]);
+    CL_SET_ARG(buf_ht[8]);
+    CL_SET_ARG(buf_potential_sols);
+    worksize = LOCAL_WORK_SIZE_SOLS;
+    work_items = MAX_POTENTIAL_SOLS * worksize;
+    status |= clEnqueueNDRangeKernel(clState->commandQueue, clState->kernel, 1, NULL, &work_items, &worksize, 0, NULL, NULL);
 
-  worksize = LOCAL_WORK_SIZE_SOLS;
-  work_items = MAX_POTENTIAL_SOLS * worksize;
-  status |= clEnqueueNDRangeKernel(clState->commandQueue, clState->kernel, 1, NULL, &work_items, &worksize, 0, NULL, NULL);
-
-  return status;
+    return status;
 }
+
+static cl_int queue_equihash_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_unused cl_uint device_thread)
+{
+    return queue_equihash_kernel_generic(clState, blk, device_thread, 200, 9);
+}
+
 #undef WORKSIZE
 
 
@@ -1353,11 +1440,12 @@ static algorithm_settings_t algos[] = {
 
   { "ethash",     ALGO_ETHASH,   "", 1, 1, 1, 0, 0, 0xFF, 0xFFFF000000000000ULL, 0x000000FFUL, 0, 128, 0, ethash_regenhash, NULL, queue_ethash_kernel, gen_hash, append_ethash_compiler_options },
   { "ethash-genoil",     ALGO_ETHASH,   "", 1, 1, 1, 0, 0, 0xFF, 0xFFFF000000000000ULL, 0x000000FFUL, 0, 128, 0, ethash_regenhash, NULL, queue_ethash_kernel, gen_hash, append_ethash_compiler_options },
-  { "ethash-new",     ALGO_ETHASH,   "", 1, 1, 1, 0, 0, 0xFF, 0xFFFF000000000000ULL, 0x000000FFUL, 0, 128, 0, ethash_regenhash, NULL, queue_ethash_kernel, gen_hash, append_ethash_compiler_options },
+  { "ethash-new",     ALGO_ETHASH,   "", 1, 1, 1, 0, 0, 0xFF, 0xFFFF000000000000ULL, 0x000000FFUL, 0, 128, 0, ethash_regenhash, NULL, NULL, queue_ethash_kernel, gen_hash, append_ethash_compiler_options },
 
-  { "cryptonight", ALGO_CRYPTONIGHT, "", (1ULL << 32), (1ULL << 32), (1ULL << 32), 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 6, 0, 0, cryptonight_regenhash, NULL, queue_cryptonight_kernel, gen_hash, NULL },
+  { "cryptonight", ALGO_CRYPTONIGHT, "", (1ULL << 32), (1ULL << 32), (1ULL << 32), 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 6, 0, 0, cryptonight_regenhash, NULL, NULL, queue_cryptonight_kernel, gen_hash, NULL },
 
-  { "equihash",     ALGO_EQUIHASH,   "", 1, (1ULL << 28), (1ULL << 28), 0, 0, 0x20000, 0xFFFF000000000000ULL, 0x00000000UL, 0, 128, 0, equihash_regenhash, NULL, queue_equihash_kernel, gen_hash, append_equihash_compiler_options },
+  { "equihash",     ALGO_EQUIHASH,   "", 1, (1ULL << 28), (1ULL << 28), 0, 0, 0x20000, 0xFFFF000000000000ULL, 0x00000000UL, 0, 128, 0, equihash_regenhash, NULL, NULL, queue_equihash_kernel, gen_hash, append_equihash_compiler_options },
+
 
   // Terminator (do not remove)
   { NULL, ALGO_UNK, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL }

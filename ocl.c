@@ -790,7 +790,7 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
 
   /* get a kernel object handle for a kernel with the given name */
   if (algorithm->type == ALGO_EQUIHASH) {
-    clState->kernel = clCreateKernel(clState->program, "kernel_sols", &status);
+  clState->kernel = clCreateKernel(clState->program, "kernel_sols", &status);
     if (status != CL_SUCCESS) {
       applog(LOG_ERR, "Error %d: Creating Kernel \"kernel_sols\" from program. (clCreateKernel)", status);
       return NULL;
@@ -798,38 +798,67 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
     char *kernel_names[] = {"kernel_init_ht",
                             "kernel_round0", "kernel_round1", "kernel_round2",
                             "kernel_round3", "kernel_round4", "kernel_round5",
-                            "kernel_round6", "kernel_round7", "kernel_round8",
-                            "kernel_potential_sols"};
+                            "kernel_round6", "kernel_round7", "kernel_round8", 
+                            "kernel_potential_sols" };
     clState->n_extra_kernels = 1 + 9 + 1;
     clState->extra_kernels = (cl_kernel *)malloc(sizeof(cl_kernel) * clState->n_extra_kernels);
     for (int i = 0; i < clState->n_extra_kernels; i++) {
       clState->extra_kernels[i] = clCreateKernel(clState->program, kernel_names[i], &status);
       if (status != CL_SUCCESS) {
-        applog(LOG_ERR, "Error %d: Creating Kernel \"%s\" from program. (clCreateKernel)", status, kernel_names[i]);
+    applog(LOG_ERR, "Error %d: Creating Kernel \"%s\" from program. (clCreateKernel)", status, kernel_names[i]);
         return NULL;
       }
     }
 
     char buffer[32];
-    clState->CLbuffer0 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, sizeof(potential_sols_t), NULL, &status);
+    clState->CLbuffer0 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(0), NULL, &status);
     snprintf(buffer, sizeof(buffer), "CLbuffer0");
     if (status != CL_SUCCESS)
       goto out;
-    clState->buffer1 = NULL;
-    for (int i = 0; i < 9; i++) {
-      snprintf(buffer, sizeof(buffer), "index_buf[%d]", i);
-      clState->index_buf[i] = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HT_SIZE, NULL, &status);
-      if (status != CL_SUCCESS)
-        goto out;
-    }
-    clState->buffer2 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, RC_SIZE, NULL, &status);
+    clState->buffer1 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(1), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer1");
+    if (status != CL_SUCCESS)
+      goto out;
+    clState->buffer2 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, ROW_COUNTERS_SIZE, NULL, &status);
     snprintf(buffer, sizeof(buffer), "buffer2");
     if (status != CL_SUCCESS)
       goto out;
-    clState->buffer3 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, RC_SIZE, NULL, &status); 
+    clState->buffer3 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, ROW_COUNTERS_SIZE, NULL, &status);
     snprintf(buffer, sizeof(buffer), "buffer3");
     if (status != CL_SUCCESS)
       goto out;
+    clState->buffer4 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(2), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer4");
+    if (status != CL_SUCCESS)
+      goto out;
+    clState->buffer5 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(3), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer5");
+    if (status != CL_SUCCESS)
+      goto out;
+    clState->buffer6 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(4), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer6");
+    if (status != CL_SUCCESS)
+        goto out;
+    clState->buffer7 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(5), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer7");
+    if (status != CL_SUCCESS)
+        goto out;
+    clState->buffer8 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(6), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer8");
+    if (status != CL_SUCCESS)
+        goto out;
+    clState->buffer9 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(7), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer9");
+    if (status != CL_SUCCESS)
+        goto out;
+    clState->buffer10 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(8), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer10");
+    if (status != CL_SUCCESS)
+        goto out;
+    clState->buffer11 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, sizeof(potential_sols_t), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer11");
+    if (status != CL_SUCCESS)
+        goto out;
     clState->padbuffer8 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, 2 * sizeof(uint32_t), NULL, &status);
     snprintf(buffer, sizeof(buffer), "padbuffer8");
     if (status != CL_SUCCESS)
@@ -843,39 +872,20 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
     if (status != CL_SUCCESS)
       goto out;
 
-    cl_mem rowCounters[] = {clState->buffer2, clState->buffer3};
-    for (int round = 0; round < PARAM_K; round++) {
-      unsigned int num = 0;
-      cl_kernel *kernel = &clState->extra_kernels[1 + round];
-      if (!round) {
-        CL_SET_ARG(clState->MidstateBuf);
-        CL_SET_ARG(clState->index_buf[round]);
-        CL_SET_ARG(rowCounters[round % 2]);
-      }
-      else {
-        CL_SET_ARG(clState->index_buf[round - 1]);
-        CL_SET_ARG(clState->index_buf[round]);
-        CL_SET_ARG(rowCounters[(round - 1) % 2]);
-        CL_SET_ARG(rowCounters[round % 2]);
-      }
-      CL_SET_ARG(clState->padbuffer8);
-    }
     unsigned int num = 0;
-    cl_kernel *kernel = &clState->extra_kernels[1 + 9];
-    CL_SET_ARG(clState->index_buf[8]);
+    cl_kernel *kernel = &clState->kernel;
     CL_SET_ARG(clState->CLbuffer0);
-    CL_SET_ARG(rowCounters[0]);
-
-    num = 0;
-    kernel = &clState->kernel;
-    CL_SET_ARG(clState->index_buf[0]);
-    CL_SET_ARG(clState->index_buf[1]);
+    CL_SET_ARG(clState->buffer1);
     CL_SET_ARG(clState->outputBuffer);
-    CL_SET_ARG(rowCounters[0]);
-    CL_SET_ARG(rowCounters[1]);
-    for (int i = 2; i < 9; i++)
-      CL_SET_ARG(clState->index_buf[i]);
-    CL_SET_ARG(clState->CLbuffer0);
+    CL_SET_ARG(clState->buffer2);
+    CL_SET_ARG(clState->buffer3);
+    CL_SET_ARG(clState->buffer4);
+    CL_SET_ARG(clState->buffer5);
+    CL_SET_ARG(clState->buffer6);
+    CL_SET_ARG(clState->buffer7);
+    CL_SET_ARG(clState->buffer8);
+    CL_SET_ARG(clState->buffer9);
+    CL_SET_ARG(clState->buffer10);
 
     if (status != CL_SUCCESS) {
       applog(LOG_ERR, "Error %d: Setting Kernel arguments for ALGO_EQUIHASH failed. (clSetKernelArg)", status);

@@ -30,6 +30,14 @@ typedef struct __clState {
   cl_mem buffer1;
   cl_mem buffer2;
   cl_mem buffer3;
+  cl_mem buffer4;
+  cl_mem buffer5;
+  cl_mem buffer6;
+  cl_mem buffer7;
+  cl_mem buffer8;
+  cl_mem buffer9;
+  cl_mem buffer10;
+  cl_mem buffer11;
   cl_mem index_buf[9];
   unsigned char cldata[256];
   bool goffset;

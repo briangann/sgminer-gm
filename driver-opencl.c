@@ -1446,7 +1446,9 @@ static int64_t opencl_scanhash(struct thr_info *thr, struct work *work,
           sols->nr = MAX_SOLS;
         }
         for (int sol_i = 0; sol_i < sols->nr; sol_i++)
-          ret += equihash_verify_sol(work, sols, sol_i);
+          ret += equihash_verify_sol(work, sols, sol_i, 200, 9);
+        //for (int sol_i = 0; sol_i < sols->nr; sol_i++)
+         // ret += equihash_verify_sol(work, sols, sol_i);
       }
       else {
         applog(LOG_ERR, "Error %d: Reading result buffer for ALGO_EQUIHASH failed. (clEnqueueReadBuffer)", status);

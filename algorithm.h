@@ -41,7 +41,8 @@ typedef enum {
   ALGO_ETHASH,
   ALGO_CRYPTONIGHT,
   ALGO_EQUIHASH,
-  ALGO_LYRA2Z
+  ALGO_LYRA2Z,
+  ALGO_SIA
 } algorithm_type_t;
 
 extern const char *algorithm_type_str[];

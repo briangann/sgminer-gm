@@ -2201,6 +2201,14 @@ static double get_work_blockdiff(const struct work *work)
     if (shift == 28) d *= 256.0; // testnet
     return d;
   }
+  else if (work->pool->algorithm.type == ALGO_SIA) {
+    unsigned char nbit[4];
+    hex2bin(nbit, work->pool->swork.nbit, 4);
+    shift = nbit[0];
+    powdiff = (8 * (0x1d - 3)) - (8 * (shift - 3));
+    diff64 = be32toh(*((uint32_t *)nbit)) & 0x0000000000FFFFFF;
+    numerator = work->pool->algorithm.diff_numerator << powdiff;
+  }
   else {
     shift = work->data[72];
     powdiff = (8 * (0x1d - 3)) - (8 * (shift - 3));;
@@ -4840,7 +4848,11 @@ static bool test_work_current(struct work *work)
   if (work->mandatory)
     return ret;
 
-  swap256(bedata, work->data + 4);
+  if (pool->algorithm.type == ALGO_SIA)
+    flip32(bedata, work->data);
+  else
+    swap256(bedata, work->data + 4);
+
   __bin2hex(hexstr, bedata, 32);
 
   /* Search to see if this block exists yet and if not, consider it a
@@ -6151,7 +6163,7 @@ static void *stratum_sthread(void *userdata)
   size_t s_size = 4096;
   char *s = (char*) malloc(s_size);
   while (42) {
-    char noncehex[12], nonce2hex[33];
+    char noncehex[20], nonce2hex[33];
     struct stratum_share *sshare;
     uint32_t *hash32, nonce;
     unsigned char nonce2[16];
@@ -6225,7 +6237,7 @@ static void *stratum_sthread(void *userdata)
       free(ASCIINonce);
       free(ASCIIResult);
     }
-    
+
     else if(pool->algorithm.type == ALGO_EQUIHASH) {
       char *nonce;
       char *solution;
@@ -6270,12 +6282,19 @@ static void *stratum_sthread(void *userdata)
       if (pool->algorithm.type == ALGO_NEOSCRYPT)
         nonce = htobe32(*((uint32_t *)(work->data + 76)));
       else if (pool->algorithm.type == ALGO_DECRED) {
-       nonce = *((uint32_t *)(work->data + 140));
-      }  
+        nonce = *((uint32_t *)(work->data + 140));
+      }
+      else if (pool->algorithm.type == ALGO_SIA) {
+        nonce = htobe32(*((uint32_t *)(work->data + 32)));
+      }
       else
         nonce = *((uint32_t *)(work->data + 76));
 
       __bin2hex(noncehex, (const unsigned char *)&nonce, 4);
+
+      // Sia nonces are actually 64 bits long
+      if (pool->algorithm.type == ALGO_SIA)
+        strcat(noncehex, "00000000");
 
       *((uint64_t *)nonce2) = htole64(work->nonce2);
       __bin2hex(nonce2hex, nonce2, work->nonce2_len);
@@ -6994,7 +7013,7 @@ static void gen_stratum_work(struct pool *pool, struct work *work)
     return;
   }
 
-  unsigned char merkle_root[32], merkle_sha[64];
+  unsigned char merkle_root[32], merkle_sha[65];
   uint32_t *data32, *swap32;
   uint64_t nonce2le;
   int i, j;
@@ -7016,7 +7035,22 @@ static void gen_stratum_work(struct pool *pool, struct work *work)
   /* Downgrade to a read lock to read off the pool variables */
   cg_dwlock(&pool->data_lock);
 
-  if (pool->algorithm.type != ALGO_DECRED) {
+  /* Generate merkle root */
+  if (pool->algorithm.type == ALGO_SIA) {
+      unsigned char *cbbuf = alloca(1 + pool->swork.cb_len);
+      cbbuf[0] = 0;
+      memcpy(cbbuf + 1, pool->coinbase, pool->swork.cb_len);
+      pool->algorithm.gen_hash(cbbuf, 1 + pool->swork.cb_len, merkle_root);
+      merkle_sha[0] = 1;
+      memcpy(merkle_sha + 33, merkle_root, 32);
+      for (i = 0; i < pool->swork.merkles; i++) {
+        memcpy(merkle_sha + 1, pool->swork.merkle_bin[i], 32);
+        pool->algorithm.gen_hash(merkle_sha, 65, merkle_root);
+        memcpy(merkle_sha + 33, merkle_root, 32);
+      }
+      memcpy(merkle_sha, merkle_root, 32);
+    }
+  else if (pool->algorithm.type != ALGO_DECRED) {
     /* Generate merkle root */
     pool->algorithm.gen_hash(pool->coinbase, pool->swork.cb_len, merkle_root);
     memcpy(merkle_sha, merkle_root, 32);
@@ -7096,7 +7130,7 @@ static void gen_stratum_work(struct pool *pool, struct work *work)
     char *header, *merkle_hash;
     int datasize = 128;
     if (pool->algorithm.type == ALGO_DECRED) datasize = 180;
-   
+
     header = bin2hex(work->data, datasize);
     if (pool->algorithm.type != ALGO_DECRED) {
       merkle_hash = bin2hex((const unsigned char *)merkle_root, 32);
@@ -7815,11 +7849,10 @@ static void rebuild_nonce(struct work *work, uint32_t nonce)
 {
   uint32_t nonce_pos = 76;
   applog(LOG_DEBUG, "REBUILD_NONCE: inside");
-  if (work->pool->algorithm.type == ALGO_CRE)
-    nonce_pos = 140;
+  if (work->pool->algorithm.type == ALGO_CRE) nonce_pos = 140;
   else if (work->pool->algorithm.type == ALGO_DECRED) nonce_pos = 140;
-  else if (work->pool->algorithm.type == ALGO_CRYPTONIGHT)
-    nonce_pos = 39;
+  else if (work->pool->algorithm.type == ALGO_SIA) nonce_pos = 32;
+  else if (work->pool->algorithm.type == ALGO_CRYPTONIGHT) nonce_pos = 39;
 
   if (work->pool->algorithm.type == ALGO_ETHASH) {
     uint64_t *work_nonce = (uint64_t *)(work->data + 32);
@@ -7862,7 +7895,7 @@ bool test_nonce(struct work *work, uint32_t nonce)
   }
   applog(LOG_DEBUG, "TEST_NONCE: returning result of rebuild");
   applog(LOG_DEBUG, "TEST_NONCE: diff1targ is %d", diff1targ);
-  grr = le32toh(*hash_32); 
+  grr = le32toh(*hash_32);
   applog(LOG_DEBUG, "TEST_NONCE: grr is %d", grr);
   return (le32toh(*hash_32) <= diff1targ);
 }

@@ -816,7 +816,6 @@ bool detect_stratum(struct pool *pool, char *url)
     pool->has_stratum = true;
     // TODO: nicehash or not
     pool->nicehash_stratum_compat = false;
-    //pool->extranonce_subscribe = false;
     if (strstr(url, "nicehash.com")) {
       pool->nicehash_stratum_compat = true;
       // force this to true or nothing will work with nicehash
@@ -7815,6 +7814,7 @@ void inc_hw_errors(struct thr_info *thr)
 static void rebuild_nonce(struct work *work, uint32_t nonce)
 {
   uint32_t nonce_pos = 76;
+  applog(LOG_DEBUG, "REBUILD_NONCE: inside");
   if (work->pool->algorithm.type == ALGO_CRE)
     nonce_pos = 140;
   else if (work->pool->algorithm.type == ALGO_DECRED) nonce_pos = 140;
@@ -7830,6 +7830,7 @@ static void rebuild_nonce(struct work *work, uint32_t nonce)
 
     *work_nonce = htole32(nonce);
   }
+  applog(LOG_DEBUG, "REBUILD_NONCE: calling regenhash");
 
   work->pool->algorithm.regenhash(work);
 }
@@ -7839,7 +7840,9 @@ bool test_nonce(struct work *work, uint32_t nonce)
 {
   uint32_t *hash_32 = (uint32_t *)(work->hash + 28);
   uint32_t diff1targ;
+  uint32_t grr;
 
+  applog(LOG_DEBUG, "TEST_NONCE: calling rebuild_nonce");
   rebuild_nonce(work, nonce);
 
   // for Neoscrypt, the diff1targ value is in work->target
@@ -7857,7 +7860,10 @@ bool test_nonce(struct work *work, uint32_t nonce)
   else {
     diff1targ = work->pool->algorithm.diff1targ;
   }
-
+  applog(LOG_DEBUG, "TEST_NONCE: returning result of rebuild");
+  applog(LOG_DEBUG, "TEST_NONCE: diff1targ is %d", diff1targ);
+  grr = le32toh(*hash_32); 
+  applog(LOG_DEBUG, "TEST_NONCE: grr is %d", grr);
   return (le32toh(*hash_32) <= diff1targ);
 }
 
@@ -7931,6 +7937,7 @@ bool submit_nonce(struct thr_info *thr, struct work *work, uint32_t nonce)
     return true;
   }
 
+  applog(LOG_DEBUG, "SUBMIT_NONCE: calling test_nonce");
   if (test_nonce(work, nonce)) {
     submit_tested_work(thr, work);
     return true;

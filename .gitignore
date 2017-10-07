@@ -45,3 +45,6 @@ lib/warn-on-use.h
 mkinstalldirs
 
 *.swp
+
+*-ORIG
+.dirstamp

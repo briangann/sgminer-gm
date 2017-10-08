@@ -6284,6 +6284,9 @@ static void *stratum_sthread(void *userdata)
       else if (pool->algorithm.type == ALGO_DECRED) {
         nonce = *((uint32_t *)(work->data + 140));
       }
+      else if (pool->algorithm.type == ALGO_LBRY) {
+        nonce = *((uint32_t *)(work->data + 108));
+      }
       else if (pool->algorithm.type == ALGO_SIA) {
         nonce = htobe32(*((uint32_t *)(work->data + 32)));
       }
@@ -7851,6 +7854,7 @@ static void rebuild_nonce(struct work *work, uint32_t nonce)
   applog(LOG_DEBUG, "REBUILD_NONCE: inside");
   if (work->pool->algorithm.type == ALGO_CRE) nonce_pos = 140;
   else if (work->pool->algorithm.type == ALGO_DECRED) nonce_pos = 140;
+  else if (work->pool->algorithm.type == ALGO_LBRY) nonce_pos = 108;
   else if (work->pool->algorithm.type == ALGO_SIA) nonce_pos = 32;
   else if (work->pool->algorithm.type == ALGO_CRYPTONIGHT) nonce_pos = 39;
 
@@ -7874,29 +7878,43 @@ bool test_nonce(struct work *work, uint32_t nonce)
   uint32_t *hash_32 = (uint32_t *)(work->hash + 28);
   uint32_t diff1targ;
   uint32_t grr;
-
+  uint64_t target;
+  uint64_t grr_target;
+  uint32_t grr_hash;
+  uint32_t grr_hash2;
   applog(LOG_DEBUG, "TEST_NONCE: calling rebuild_nonce");
   rebuild_nonce(work, nonce);
 
   // for Neoscrypt, the diff1targ value is in work->target
-  if (work->pool->algorithm.type == ALGO_NEOSCRYPT || work->pool->algorithm.type == ALGO_PLUCK
-    || work->pool->algorithm.type == ALGO_YESCRYPT || work->pool->algorithm.type == ALGO_YESCRYPT_MULTI) {
-    diff1targ = ((uint32_t *)work->target)[7];
-  }
-  else if (work->pool->algorithm.type == ALGO_ETHASH) {
-    uint64_t target = *(uint64_t*) (work->device_target + 24);
-    return (bswap_64(*(uint64_t*) work->hash) <= target);
-  }
-  else if (work->pool->algorithm.type == ALGO_CRYPTONIGHT) {
-    return (((uint32_t *)work->hash)[7] <= work->XMRTarget);
-  }
-  else {
-    diff1targ = work->pool->algorithm.diff1targ;
+  switch (work->pool->algorithm.type) {
+    case ALGO_NEOSCRYPT:
+    case ALGO_PLUCK:
+    case ALGO_YESCRYPT:
+    case ALGO_YESCRYPT_MULTI:
+      diff1targ = ((uint32_t *)work->target)[7];
+      break;
+    case ALGO_ETHASH:
+      target = *(uint64_t*) (work->device_target + 24);
+      return (bswap_64(*(uint64_t*) work->hash) <= target);
+      break;
+    case ALGO_CRYPTONIGHT:
+      return (((uint32_t *)work->hash)[7] <= work->XMRTarget);
+      break;
+    default:
+      diff1targ = work->pool->algorithm.diff1targ;
+      break;
   }
   applog(LOG_DEBUG, "TEST_NONCE: returning result of rebuild");
   applog(LOG_DEBUG, "TEST_NONCE: diff1targ is %d", diff1targ);
-  grr = le32toh(*hash_32);
+  //grr = le32toh(*hash_32);
+  grr = ((uint32_t *)work->target)[7];
   applog(LOG_DEBUG, "TEST_NONCE: grr is %d", grr);
+  grr_target = *(uint64_t*) (work->device_target + 24);
+  applog(LOG_DEBUG, "TEST_NONCE: grr_target is %d", grr_target);
+  grr_hash = bswap_64(*(uint64_t*) work->hash);
+  applog(LOG_DEBUG, "TEST_NONCE: grr_hash is %d", grr_hash);
+  grr_hash2 = ((uint32_t *)work->hash)[7];
+  applog(LOG_DEBUG, "TEST_NONCE: grr_hash2 is %d", grr_hash2);
   return (le32toh(*hash_32) <= diff1targ);
 }
 

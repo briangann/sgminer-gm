@@ -46,6 +46,7 @@
 #include "algorithm/equihash.h"
 #include "algorithm/lyra2Z.h"
 #include "algorithm/sia.h"
+#include "algorithm/lbry.h"
 
 #include "compat.h"
 
@@ -83,7 +84,8 @@ const char *algorithm_type_str[] = {
   "Cryptonight",
   "Equihash",
   "Lyra2Z",
-  "Sia"
+  "Sia",
+  "Lbry"
 };
 
 void sha256(const unsigned char *message, unsigned int len, unsigned char *digest)
@@ -93,6 +95,19 @@ void sha256(const unsigned char *message, unsigned int len, unsigned char *diges
   sph_sha256_init(&ctx_sha2);
   sph_sha256(&ctx_sha2, message, len);
   sph_sha256_close(&ctx_sha2, (void*)digest);
+}
+
+void sha256d_midstate(struct work *work)
+{
+  unsigned char data[64];
+  uint32_t *data32 = (uint32_t *)data;
+  sph_sha256_context ctx;
+
+  flip64(data32, work->data);
+  sph_sha256_init(&ctx);
+  sph_sha256(&ctx, data, 64);
+  memcpy(work->midstate, ctx.val, 32);
+  endian_flip32(work->midstate, work->midstate);
 }
 
 void gen_hash(const unsigned char *data, unsigned int len, unsigned char *hash)
@@ -1262,6 +1277,31 @@ static cl_int queue_sia_kernel(struct __clState *clState, struct _dev_blk_ctx *b
   return status;
 }
 
+static cl_int queue_lbry_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __maybe_unused cl_uint threads)
+{
+  cl_kernel *kernel = &clState->kernel;
+  unsigned int num = 0;
+  cl_ulong le_target;
+  cl_int status = 0;
+
+  le_target = *(cl_ulong *)(blk->work->target + 24);
+  flip112(clState->cldata, blk->work->data);
+  status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, true, 0, 112, clState->cldata, 0, NULL, NULL);
+
+  CL_SET_ARG(clState->CLbuffer0);
+  CL_SET_ARG(clState->padbuffer8);
+  num = 0;
+  kernel = clState->extra_kernels;
+  CL_SET_ARG_0(clState->padbuffer8);
+  num = 0;
+
+  CL_NEXTKERNEL_SET_ARG(clState->padbuffer8);
+  CL_SET_ARG(clState->outputBuffer);
+  CL_SET_ARG(le_target);
+
+  return status;
+}
+
 #define WORKSIZE clState->wsize
 
 static cl_int queue_equihash_kernel_generic(_clState *clState, dev_blk_ctx *blk, __maybe_unused cl_uint device_thread, int param_n, int param_k)
@@ -1627,6 +1667,11 @@ static algorithm_settings_t algos[] = {
     sia_regenhash, \
     NULL, NULL, \
     queue_sia_kernel, sia_gen_hash, NULL },
+
+  { "lbry", ALGO_LBRY, "", 1, 256, 256, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 2, 4 * 8 * 4194304, 0, \
+    lbry_regenhash, \
+    NULL, NULL, \
+    queue_lbry_kernel, gen_hash, NULL },
 
   // Terminator (do not remove)
   { NULL, ALGO_UNK, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL }

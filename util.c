@@ -1761,6 +1761,8 @@ static bool parse_notify(struct pool *pool, json_t *val)
   free(pool->swork.bbversion);
   free(pool->swork.nbit);
   free(pool->swork.ntime);
+  if(has_trie) hex2bin(pool->swork.trie, trie, 32);
+  pool->swork.has_trie = has_trie;
   pool->swork.job_id = job_id;
   pool->swork.prev_hash = prev_hash;
   cb1_len = strlen(coinbase1) / 2;
@@ -1801,50 +1803,77 @@ static bool parse_notify(struct pool *pool, json_t *val)
             strlen(pool->swork.prev_hash);
   }
 
-  //pool->swork.header_len = pool->merkle_offset +
-  ///* merkle_hash */  32 +
-  //       strlen(pool->swork.ntime) +
-  //       strlen(pool->swork.nbit) +
-  ///* nonce */    8 +
-  ///* workpadding */  96;
-  pool->merkle_offset /= 2;
-  //pool->swork.header_len = pool->swork.header_len * 2 + 1;
-  //align_len(&pool->swork.header_len);
-  //header = (char *)alloca(pool->swork.header_len);
-  header = (char *)alloca(257);
-  if (pool->algorithm.type == ALGO_SIA) {
-    snprintf(header, 257,
-      "%s%s%s%s",
-      pool->swork.prev_hash,
-      "0000000000000000", /* nonce */
-      pool->swork.ntime,
-      blank_merkel
-    );
-  } else {
-    snprintf(header, 257,
-      "%s%s%s%s%s%s%s",
-      pool->swork.bbversion,
-      pool->swork.prev_hash,
-      blank_merkel,
-      has_trie ? trie : "",
-      pool->swork.ntime,
-      pool->swork.nbit,
-      "00000000" /* nonce */
-    );
-  }
-  header_len = strlen(header);
-  memset(header + header_len, '0', 256 - header_len);
-  header[256] = '\0';
-  if (unlikely(!hex2bin(pool->header_bin, header, 128))) {
-    applog(LOG_WARNING, "%s: Failed to convert header to header_bin, got %s", __func__, header);
-    pool_failed(pool);
-    // TODO: memory leaks? goto out, clean up there?
-    return false;
-  }
+  if(has_trie)
+  {
+	  pool->swork.header_len = pool->merkle_offset + 32 + 32 + strlen(pool->swork.ntime) + strlen(pool->swork.nbit) + 8 + 96;
+	  pool->merkle_offset /= 2;
+	  pool->swork.header_len = pool->swork.header_len * 2 + 1;
+	  align_len(&pool->swork.header_len);
+	  header = (char *)alloca(pool->swork.header_len);
 
-  if (pool->algorithm.type == ALGO_SIA)
-    flip80(pool->header_bin, pool->header_bin);
+	  snprintf(header, pool->swork.header_len,
+  		"%s%s%s%s%s%s%s",
+  		pool->swork.bbversion,
+  		pool->swork.prev_hash,
+  		blank_merkel,
+  		trie,
+  		pool->swork.ntime,
+  		pool->swork.nbit,
+  		"00000000", /* nonce */
+  		workpadding);
+  	  if (unlikely(!hex2bin(pool->header_bin, header, strlen(header) / 2))) {
+  		applog(LOG_WARNING, "%s: Failed to convert header to header_bin, got %s", __func__, header);
+  		pool_failed(pool);
+  		// TODO: memory leaks? goto out, clean up there?
+  		return false;
+  	  }
+  	}
+  else
+  {
+    //pool->swork.header_len = pool->merkle_offset +
+    ///* merkle_hash */  32 +
+    //       strlen(pool->swork.ntime) +
+    //       strlen(pool->swork.nbit) +
+    ///* nonce */    8 +
+    ///* workpadding */  96;
+    pool->merkle_offset /= 2;
+    //pool->swork.header_len = pool->swork.header_len * 2 + 1;
+    //align_len(&pool->swork.header_len);
+    //header = (char *)alloca(pool->swork.header_len);
+    header = (char *)alloca(257);
+    if (pool->algorithm.type == ALGO_SIA) {
+      snprintf(header, 257,
+        "%s%s%s%s",
+        pool->swork.prev_hash,
+        "0000000000000000", /* nonce */
+        pool->swork.ntime,
+        blank_merkel
+      );
+    } else {
+      snprintf(header, 257,
+        "%s%s%s%s%s%s%s",
+        pool->swork.bbversion,
+        pool->swork.prev_hash,
+        blank_merkel,
+        has_trie ? trie : "",
+        pool->swork.ntime,
+        pool->swork.nbit,
+        "00000000" /* nonce */
+      );
+    }
+    header_len = strlen(header);
+    memset(header + header_len, '0', 256 - header_len);
+    header[256] = '\0';
+    if (unlikely(!hex2bin(pool->header_bin, header, 128))) {
+      applog(LOG_WARNING, "%s: Failed to convert header to header_bin, got %s", __func__, header);
+      pool_failed(pool);
+      // TODO: memory leaks? goto out, clean up there?
+      return false;
+    }
 
+    if (pool->algorithm.type == ALGO_SIA)
+      flip80(pool->header_bin, pool->header_bin);
+  }
   cb1 = (unsigned char *)calloc(cb1_len, 1);
   if (unlikely(!cb1))
     quithere(1, "Failed to calloc cb1 in parse_notify");
@@ -2662,20 +2691,23 @@ bool auth_stratum(struct pool *pool)
   free(sret);
   res_val = json_object_get(val, "result");
   err_val = json_object_get(val, "error");
-
-  if (!res_val || json_is_false(res_val) || (err_val && !json_is_null(err_val)))  {
-    char *ss;
-
-    if (err_val)
-      ss = json_dumps(err_val, JSON_INDENT(3));
-    else
-      ss = strdup("(unknown reason)");
-    applog(LOG_INFO, "auth_stratum(): %s JSON stratum auth failed: %s", get_pool_name(pool), ss);
-    free(ss);
-
-    suspend_stratum(pool);
-
-    goto out;
+  // check id, if it exists then the stratum is ok
+  res_id = json_object_get(val, "id");
+  if (res_id) {
+    applog(LOG_INFO, "auth_stratum(): Stratum Auth Success: id %s", json_string_value(res_id));
+  }
+  else {
+    if (!res_val || json_is_false(res_val) || (err_val && !json_is_null(err_val)))  {
+      char *ss;
+      if (err_val)
+        ss = json_dumps(err_val, JSON_INDENT(3));
+      else
+        ss = strdup("(unknown reason)");
+      applog(LOG_INFO, "auth_stratum(): %s JSON stratum auth failed: %s", get_pool_name(pool), ss);
+      free(ss);
+      suspend_stratum(pool);
+      goto out;
+    }
   }
 
   //check if the result contains an id... if so then we need to process as first job

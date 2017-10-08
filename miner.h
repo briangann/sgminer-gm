@@ -769,6 +769,16 @@ static inline void flip80(void *dest_p, const void *src_p)
     dest[i] = swab32(src[i]);
 }
 
+static inline void flip112(void *dest_p, const void *src_p)
+{
+  uint32_t *dest = (uint32_t *)dest_p;
+  const uint32_t *src = (uint32_t *)src_p;
+  int i;
+
+  for (i = 0; i < 28; i++)
+    dest[i] = swab32(src[i]);
+}
+
 static inline void flip128(void *dest_p, const void *src_p)
 {
   uint32_t *dest = (uint32_t *)dest_p;
@@ -794,7 +804,7 @@ static inline void flip168(void *dest_p, const void *src_p)
  * (unsigned char) in big-endian form.  Assumes len is a multiple of 4.
  */
 static inline void
-be32enc_vect(uint32_t *dst, const uint32_t *src, uint32_t len)
+NOTbe32enc_vect(uint32_t *dst, const uint32_t *src, uint32_t len)
 {
   uint32_t i;
 
@@ -1353,6 +1363,8 @@ struct stratum_work {
   char *bbversion;
   char *nbit;
   char *ntime;
+  uint8_t trie[32];
+  bool has_trie;
   bool clean;
 
   size_t cb_len;

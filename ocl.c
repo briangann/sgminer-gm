@@ -801,7 +801,7 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
     char *kernel_names[] = {"kernel_init_ht",
                             "kernel_round0", "kernel_round1", "kernel_round2",
                             "kernel_round3", "kernel_round4", "kernel_round5",
-                            "kernel_round6", "kernel_round7", "kernel_round8", 
+                            "kernel_round6", "kernel_round7", "kernel_round8",
                             "kernel_potential_sols" };
     clState->n_extra_kernels = 1 + 9 + 1;
     clState->extra_kernels = (cl_kernel *)malloc(sizeof(cl_kernel) * clState->n_extra_kernels);
@@ -907,7 +907,7 @@ out:
       applog(LOG_ERR, "Error %d: Creating Kernel from program. (clCreateKernel)", status);
       return NULL;
     }
-  
+
     clState->n_extra_kernels = algorithm->n_extra_kernels;
     if (clState->n_extra_kernels > 0) {
       unsigned int i;
@@ -925,7 +925,7 @@ out:
       }
     }
   }
-    
+
 
   if (algorithm->type == ALGO_ETHASH) {
     clState->GenerateDAG = clCreateKernel(clState->program, "GenerateDAG", &status);
@@ -950,6 +950,9 @@ out:
       break;
     case ALGO_ETHASH:
       readbufsize = 32;
+      break;
+    case ALGO_LBRY:
+      readbufsize = 112;
       break;
     default:
       readbufsize = 128;
@@ -1075,7 +1078,7 @@ out:
       return NULL;
     }
   }
-  
+
   if (algorithm->type == ALGO_LYRA2Z) {
     size_t GlobalThreads;
     //readbufsize = 76UL;
@@ -1121,7 +1124,7 @@ out:
       return NULL;
     }
   }
-  
+
   applog(LOG_DEBUG, "Using read buffer sized %lu", (unsigned long)readbufsize);
   clState->CLbuffer0 = clCreateBuffer(clState->context, CL_MEM_READ_ONLY, readbufsize, NULL, &status);
   if (status != CL_SUCCESS) {
@@ -1141,4 +1144,3 @@ out:
 
   return clState;
 }
-

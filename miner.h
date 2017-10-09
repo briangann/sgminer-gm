@@ -799,6 +799,15 @@ static inline void flip168(void *dest_p, const void *src_p)
 		dest[i] = swab32(src[i]);
 }
 
+static inline void flip196(void *dest_p, const void *src_p)
+{
+        uint32_t *dest = (uint32_t *)dest_p;
+        const uint32_t *src = (uint32_t *)src_p;
+        int i;
+
+        for (i = 0; i < 49; i++)
+                dest[i] = swab32(src[i]);
+}
 /*
  * Encode a length len/4 vector of (uint32_t) into a length len vector of
  * (unsigned char) in big-endian form.  Assumes len is a multiple of 4.

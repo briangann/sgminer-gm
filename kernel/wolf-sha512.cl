@@ -67,8 +67,8 @@ ulong FAST_ROTR64_HI(const uint2 x, const uint y) { return(as_ulong(amd_bitalign
 #define SSG5_0(x) (FAST_ROTR64_LO(as_uint2(x), 1) ^ FAST_ROTR64_LO(as_uint2(x), 8) ^ ((x) >> 7))
 #define SSG5_1(x) (FAST_ROTR64_LO(as_uint2(x), 19) ^ FAST_ROTR64_HI(as_uint2(x), 61) ^ ((x) >> 6))
 
-#define CH(X, Y, Z) bitselect(Z, Y, X)
-#define MAJ(X, Y, Z) CH((X ^ Z), Y, Z)
+#define WOLF_CH(X, Y, Z) bitselect(Z, Y, X)
+#define WOLF_MAJ(X, Y, Z) WOLF_CH((X ^ Z), Y, Z)
 
 void SHA2_512_STEP2(const ulong *W, uint ord, ulong *r, int i)
 {
@@ -78,9 +78,9 @@ void SHA2_512_STEP2(const ulong *W, uint ord, ulong *r, int i)
 	ulong a = r[x & 7], b = r[(x + 1) & 7], c = r[(x + 2) & 7], d = r[(x + 3) & 7];
 	ulong e = r[(x + 4) & 7], f = r[(x + 5) & 7], g = r[(x + 6) & 7], h = r[(x + 7) & 7];
 	
-	T1 = h + BSG5_1(e) + CH(e, f, g) + W[i] + K512[i];
+	T1 = h + BSG5_1(e) + WOLF_CH(e, f, g) + W[i] + K512[i];
 	r[(3 + x) & 7] = d + T1;
-	r[(7 + x) & 7] = T1 + BSG5_0(a) + MAJ(a, b, c);
+	r[(7 + x) & 7] = T1 + BSG5_0(a) + WOLF_MAJ(a, b, c);
 }
 
 void SHA512Block(ulong *data, ulong *buf)

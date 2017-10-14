@@ -90,6 +90,7 @@ sgminer_SOURCES += algorithm/lyra2Z.c algorithm/lyra2Z.h
 sgminer_SOURCES += algorithm/sia.c algorithm/sia.h
 sgminer_SOURCES += algorithm/lbry.c algorithm/lbry.h
 sgminer_SOURCES += algorithm/pascal.c algorithm/pascal.h
+sgminer_SOURCES += algorithm/skunk.c algorithm/skunk.h
 sgminer_SOURCES += gbt-util.c gbt-util.h
 
 bin_SCRIPTS	= $(top_srcdir)/kernel/*.cl

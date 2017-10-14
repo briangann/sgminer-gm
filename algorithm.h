@@ -45,7 +45,8 @@ typedef enum {
   ALGO_SIA,
   ALGO_LBRY,
   ALGO_XEVAN,
-  ALGO_PASCAL
+  ALGO_PASCAL,
+  ALGO_SKUNK
 } algorithm_type_t;
 
 extern const char *algorithm_type_str[];

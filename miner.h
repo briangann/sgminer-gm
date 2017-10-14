@@ -799,6 +799,17 @@ static inline void flip168(void *dest_p, const void *src_p)
 		dest[i] = swab32(src[i]);
 }
 
+static inline void flip180(void *dest_p, const void *src_p)
+{
+	uint32_t *dest = (uint32_t *)dest_p;
+	const uint32_t *src = (uint32_t *)src_p;
+	int i;
+
+	for (i = 0; i < 45; i++)
+		dest[i] = swab32(src[i]);
+}
+
+
 static inline void flip196(void *dest_p, const void *src_p)
 {
         uint32_t *dest = (uint32_t *)dest_p;
@@ -1558,15 +1569,15 @@ struct pool {
 
 struct work {
   unsigned char data[256];
-  unsigned char midstate[32];
+  unsigned char midstate[128];
   unsigned char target[32];
   unsigned char hash[32];
   unsigned char mixhash[32];
 
   unsigned char device_target[32];
-  double    device_diff;
-  double    share_diff;
-  double	network_diff;
+  double   device_diff;
+  double   share_diff;
+  double   network_diff;
 
   uint32_t eth_epoch;
   uint64_t Nonce;
@@ -1598,6 +1609,7 @@ struct work {
   bool    stale;
   bool    mandatory;
   bool    block;
+  bool    midstate_done;
 
   bool    stratum;
   char    *job_id;

@@ -49,6 +49,7 @@
 #include "algorithm/lbry.h"
 #include "algorithm/xevan.h"
 #include "algorithm/pascal.h"
+#include "algorithm/skunk.h"
 
 #include "compat.h"
 
@@ -89,7 +90,8 @@ const char *algorithm_type_str[] = {
   "Sia",
   "Lbry",
   "Xevan",
-  "Pascal"
+  "Pascal",
+  "Skunk"
 };
 
 void sha256(const unsigned char *message, unsigned int len, unsigned char *digest)
@@ -453,6 +455,35 @@ static cl_int queue_darkcoin_mod_kernel(struct __clState *clState, struct _dev_b
   // simd - search9
   CL_NEXTKERNEL_SET_ARG_0(clState->padbuffer8);
   // echo - search10
+  num = 0;
+  CL_NEXTKERNEL_SET_ARG(clState->padbuffer8);
+  CL_SET_ARG(clState->outputBuffer);
+  CL_SET_ARG(le_target);
+
+  return status;
+}
+
+static cl_int queue_skunk_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __maybe_unused cl_uint threads)
+{
+  cl_kernel *kernel;
+  unsigned int num;
+  cl_ulong le_target;
+  cl_int status = 0;
+
+  le_target = *(cl_ulong *)(blk->work->device_target + 24);
+  flip80(clState->cldata, blk->work->data);
+  status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, true, 0, 80, clState->cldata, 0, NULL, NULL);
+  // skein search()
+  kernel = &clState->kernel;
+  num = 0;
+  CL_SET_ARG(clState->CLbuffer0);
+  CL_SET_ARG(clState->padbuffer8);
+  // cubehash search1()
+  kernel = clState->extra_kernels;
+  CL_SET_ARG_0(clState->padbuffer8);
+  // fugue search2()
+  CL_NEXTKERNEL_SET_ARG_0(clState->padbuffer8);
+  // gost/streebog search3()
   num = 0;
   CL_NEXTKERNEL_SET_ARG(clState->padbuffer8);
   CL_SET_ARG(clState->outputBuffer);
@@ -1801,6 +1832,11 @@ static algorithm_settings_t algos[] = {
     pascal_midstate, NULL, \
     queue_pascal_kernel, NULL, NULL },
 
+  { "skunk", ALGO_SKUNK, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 3, 8 * 16 * 4194304, 0, \
+    skunk_regenhash, \
+    NULL, precalc_hash_skunk, \
+    queue_skunk_kernel, gen_hash, append_x11_compiler_options },
+
   // Terminator (do not remove)
   { NULL, ALGO_UNK, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL }
 };
@@ -1881,6 +1917,8 @@ static const char *lookup_algorithm_alias(const char *lookup_alias, uint8_t *nfa
   ALGO_ALIAS("zcash", "equihash");
   ALGO_ALIAS("lyra2z", "lyra2Z");
   ALGO_ALIAS("zcoin", "lyra2Z");
+  ALGO_ALIAS("skunkhash", "skunk");
+  ALGO_ALIAS("signatum", "skunk");
 
 #undef ALGO_ALIAS
 #undef ALGO_ALIAS_NF

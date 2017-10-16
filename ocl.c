@@ -957,6 +957,9 @@ out:
     case ALGO_LBRY:
       readbufsize = 112;
       break;
+    case ALGO_TRIBUS:
+      readbufsize = 128 + 16; // midstate + endofdata (16)
+      break;
     default:
       readbufsize = 128;
   }

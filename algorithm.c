@@ -50,6 +50,7 @@
 #include "algorithm/xevan.h"
 #include "algorithm/pascal.h"
 #include "algorithm/skunk.h"
+#include "algorithm/tribus.h"
 
 #include "compat.h"
 
@@ -91,7 +92,8 @@ const char *algorithm_type_str[] = {
   "Lbry",
   "Xevan",
   "Pascal",
-  "Skunk"
+  "Skunk",
+  "Tribus"
 };
 
 void sha256(const unsigned char *message, unsigned int len, unsigned char *digest)
@@ -457,6 +459,37 @@ static cl_int queue_darkcoin_mod_kernel(struct __clState *clState, struct _dev_b
   // echo - search10
   num = 0;
   CL_NEXTKERNEL_SET_ARG(clState->padbuffer8);
+  CL_SET_ARG(clState->outputBuffer);
+  CL_SET_ARG(le_target);
+
+  return status;
+}
+
+static cl_int queue_tribus_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __maybe_unused cl_uint threads)
+{
+  uint32_t *midstate = (uint32_t*)(&blk->work->midstate); // 128 bytes
+  uint32_t *data_end = (uint32_t*)(&blk->work->data[64]); //  16 bytes (end of data)
+  cl_kernel *kernel;
+  cl_ulong le_target;
+  cl_int status = 0;
+  unsigned int num;
+
+  le_target = *(cl_ulong *)(blk->work->device_target + 24);
+  memcpy(clState->cldata, blk->work->midstate, 128);
+  for (int i = 0; i < 3; i++)
+    ((uint32_t*)clState->cldata)[32 + i] = swab32(data_end[i]);
+
+  status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, true, 0, 128+16, clState->cldata, 0, NULL, NULL);
+
+  // jh80 + keccak - search()
+  kernel = &clState->kernel;
+  num = 0;
+  CL_SET_ARG(clState->CLbuffer0);
+  CL_SET_ARG(clState->padbuffer8);
+  // echo - search1()
+  kernel = clState->extra_kernels;
+  num = 0;
+  CL_SET_ARG(clState->padbuffer8);
   CL_SET_ARG(clState->outputBuffer);
   CL_SET_ARG(le_target);
 
@@ -1836,6 +1869,11 @@ static algorithm_settings_t algos[] = {
     skunk_regenhash, \
     NULL, precalc_hash_skunk, \
     queue_skunk_kernel, gen_hash, append_x11_compiler_options },
+
+  { "tribus", ALGO_TRIBUS, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 1, 4 * 16 * 4194304, 0, \
+    tribus_regenhash,
+    NULL, precalc_hash_tribus,
+    queue_tribus_kernel, gen_hash, append_x11_compiler_options },
 
   // Terminator (do not remove)
   { NULL, ALGO_UNK, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL }

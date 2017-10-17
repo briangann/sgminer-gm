@@ -51,6 +51,7 @@
 #include "algorithm/pascal.h"
 #include "algorithm/skunk.h"
 #include "algorithm/tribus.h"
+#include "algorithm/sibcoin.h"
 
 #include "compat.h"
 
@@ -93,7 +94,8 @@ const char *algorithm_type_str[] = {
   "Xevan",
   "Pascal",
   "Skunk",
-  "Tribus"
+  "Tribus",
+  "Sibcoin"
 };
 
 void sha256(const unsigned char *message, unsigned int len, unsigned char *digest)
@@ -465,6 +467,51 @@ static cl_int queue_darkcoin_mod_kernel(struct __clState *clState, struct _dev_b
   return status;
 }
 
+static cl_int queue_sibcoin_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __maybe_unused cl_uint threads)
+{
+  cl_kernel *kernel;
+  unsigned int num;
+  cl_ulong le_target;
+  cl_int status = 0;
+
+  le_target = *(cl_ulong *)(blk->work->device_target + 24);
+  flip80(clState->cldata, blk->work->data);
+  status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, true, 0, 80, clState->cldata, 0, NULL, NULL);
+
+  // blake - search
+  kernel = &clState->kernel;
+  num = 0;
+  CL_SET_ARG(clState->CLbuffer0);
+  CL_SET_ARG(clState->padbuffer8);
+  // bmw - search1
+  kernel = clState->extra_kernels;
+  CL_SET_ARG_0(clState->padbuffer8);
+  // groestl - search2
+  CL_NEXTKERNEL_SET_ARG_0(clState->padbuffer8);
+  // skein - search3
+  CL_NEXTKERNEL_SET_ARG_0(clState->padbuffer8);
+  // jh - search4
+  CL_NEXTKERNEL_SET_ARG_0(clState->padbuffer8);
+  // keccak - search5
+  CL_NEXTKERNEL_SET_ARG_0(clState->padbuffer8);
+  // gost - search6
+  CL_NEXTKERNEL_SET_ARG_0(clState->padbuffer8);
+  // luffa - search7
+  CL_NEXTKERNEL_SET_ARG_0(clState->padbuffer8);
+  // cubehash - search8
+  CL_NEXTKERNEL_SET_ARG_0(clState->padbuffer8);
+  // shavite - search9
+  CL_NEXTKERNEL_SET_ARG_0(clState->padbuffer8);
+  // simd - search10
+  CL_NEXTKERNEL_SET_ARG_0(clState->padbuffer8);
+  // echo - search11
+  num = 0;
+  CL_NEXTKERNEL_SET_ARG(clState->padbuffer8);
+  CL_SET_ARG(clState->outputBuffer);
+  CL_SET_ARG(le_target);
+
+  return status;
+}
 static cl_int queue_tribus_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __maybe_unused cl_uint threads)
 {
   uint32_t *midstate = (uint32_t*)(&blk->work->midstate); // 128 bytes
@@ -1875,6 +1922,11 @@ static algorithm_settings_t algos[] = {
     NULL, precalc_hash_tribus,
     queue_tribus_kernel, gen_hash, append_x11_compiler_options },
 
+  { "sibcoin-mod", ALGO_SIBCOIN, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 11, 8 * 16 * 4194304, 0, \
+    sibcoin_regenhash, \
+    NULL, NULL, \
+   queue_sibcoin_kernel, gen_hash, append_x11_compiler_options },
+
   // Terminator (do not remove)
   { NULL, ALGO_UNK, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL }
 };
@@ -1957,6 +2009,9 @@ static const char *lookup_algorithm_alias(const char *lookup_alias, uint8_t *nfa
   ALGO_ALIAS("zcoin", "lyra2Z");
   ALGO_ALIAS("skunkhash", "skunk");
   ALGO_ALIAS("signatum", "skunk");
+  ALGO_ALIAS("x11gost", "sibcoin-mod");
+  ALGO_ALIAS("sibcoin", "sibcoin-mod");
+  ALGO_ALIAS("sib", "sibcoin-mod");
 
 #undef ALGO_ALIAS
 #undef ALGO_ALIAS_NF

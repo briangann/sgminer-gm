@@ -94,6 +94,7 @@ sgminer_SOURCES += algorithm/skunk.c algorithm/skunk.h
 sgminer_SOURCES += algorithm/tribus.c algorithm/tribus.h
 sgminer_SOURCES += algorithm/sibcoin.c algorithm/sibcoin.h
 sgminer_SOURCES += algorithm/phi.c algorithm/phi.h
+sgminer_SOURCES += algorithm/timetravel10.c algorithm/timetravel10.h
 sgminer_SOURCES += gbt-util.c gbt-util.h
 
 bin_SCRIPTS	= $(top_srcdir)/kernel/*.cl

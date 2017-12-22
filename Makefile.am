@@ -70,6 +70,7 @@ sgminer_SOURCES += algorithm/maxcoin.c algorithm/maxcoin.h
 sgminer_SOURCES += algorithm/talkcoin.c algorithm/talkcoin.h
 sgminer_SOURCES += algorithm/bitblock.c algorithm/bitblock.h
 sgminer_SOURCES += algorithm/x14.c algorithm/x14.h
+sgminer_SOURCES += algorithm/xevan.c algorithm/xevan.h
 sgminer_SOURCES += algorithm/fresh.c algorithm/fresh.h
 sgminer_SOURCES += algorithm/whirlcoin.c algorithm/whirlcoin.h
 sgminer_SOURCES += algorithm/neoscrypt.c algorithm/neoscrypt.h
@@ -81,10 +82,18 @@ sgminer_SOURCES += algorithm/credits.c algorithm/credits.h
 sgminer_SOURCES += algorithm/yescrypt.h algorithm/yescrypt.c algorithm/yescrypt_core.h algorithm/yescrypt-opt.c algorithm/yescryptcommon.c algorithm/sysendian.h
 sgminer_SOURCES += algorithm/blake256.c algorithm/blake256.h
 sgminer_SOURCES += algorithm/blakecoin.c algorithm/blakecoin.h
+sgminer_SOURCES += algorithm/decred.c algorithm/decred.h
 sgminer_SOURCES += algorithm/ethash.c algorithm/ethgencache.c algorithm/ethash.h algorithm/eth-sha3.c algorithm/eth-sha3.h
 sgminer_SOURCES += algorithm/cryptonight.c algorithm/cryptonight.h algorithm/cn-aes-tbls.h
 sgminer_SOURCES += algorithm/equihash.c algorithm/equihash.h
+sgminer_SOURCES += algorithm/lyra2Z.c algorithm/lyra2Z.h
+sgminer_SOURCES += algorithm/sia.c algorithm/sia.h
+sgminer_SOURCES += algorithm/lbry.c algorithm/lbry.h
+sgminer_SOURCES += algorithm/pascal.c algorithm/pascal.h
+sgminer_SOURCES += algorithm/skunk.c algorithm/skunk.h
+sgminer_SOURCES += algorithm/tribus.c algorithm/tribus.h
+sgminer_SOURCES += algorithm/sibcoin.c algorithm/sibcoin.h
+sgminer_SOURCES += algorithm/phi.c algorithm/phi.h
 sgminer_SOURCES += gbt-util.c gbt-util.h
 
 bin_SCRIPTS	= $(top_srcdir)/kernel/*.cl
-

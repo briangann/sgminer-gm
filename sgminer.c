@@ -61,6 +61,7 @@ char *curly = ":D";
 
 #include "algorithm.h"
 #include "algorithm/ethash.h"
+#include "algorithm/pascal.h"
 #include "gbt-util.h"
 #include "pool.h"
 #include "config_parser.h"
@@ -128,6 +129,7 @@ int nDevs;
 int opt_dynamic_interval = 7;
 int opt_g_threads = -1;
 bool opt_restart = true;
+int opt_vote = 0;
 
 /*****************************************
  * Xn Algorithm options
@@ -815,7 +817,6 @@ bool detect_stratum(struct pool *pool, char *url)
     pool->has_stratum = true;
     // TODO: nicehash or not
     pool->nicehash_stratum_compat = false;
-    //pool->extranonce_subscribe = false;
     if (strstr(url, "nicehash.com")) {
       pool->nicehash_stratum_compat = true;
       // force this to true or nothing will work with nicehash
@@ -1872,6 +1873,9 @@ struct opt_table opt_config_table[] = {
   OPT_WITHOUT_ARG("--verbose|-v",
       opt_set_bool, &opt_verbose,
       "Log verbose output to stderr as well as status output"),
+  OPT_WITH_ARG("--vote",
+      set_int_1_to_65535, opt_show_intval, &opt_vote,
+      "Optional vote value for decred blocks"),
   OPT_WITH_ARG("--watchpool-refresh",
       set_int_1_to_65535, opt_show_intval, &opt_watchpool_refresh,
       "Interval in seconds to refresh pool status"),
@@ -1977,6 +1981,7 @@ static bool jobj_binary(const json_t *obj, const char *key,
 
 static void calc_midstate(struct work *work)
 {
+  applog(LOG_DEBUG, "sgminer called own calc_midstate");
   unsigned char data[64];
   uint32_t *data32 = (uint32_t *)data;
   sph_sha256_context ctx;
@@ -2171,20 +2176,43 @@ static void update_gbt(struct pool *pool)
 /* Return the work coin/network difficulty */
 static double get_work_blockdiff(const struct work *work)
 {
+  uint32_t* data = (uint32_t*) work->data;
   uint64_t diff64;
   double numerator;
+  int powdiff;
+  uint8_t shift;
+
+  if (work->pool->algorithm.type == ALGO_ETHASH) {
+    return 0;//work->network_diff;
+  }
 
   // Neoscrypt has the data reversed
   if (work->pool->algorithm.type == ALGO_NEOSCRYPT) {
     diff64 = bswap_64(((uint64_t)(be32toh(*((uint32_t *)(work->data + 72))) & 0xFFFFFF00)) << 8);
     numerator = (double)work->pool->algorithm.diff_numerator;
   }
-  if (work->pool->algorithm.type == ALGO_ETHASH) {
-    return 0;//work->network_diff;
+  else if (work->pool->algorithm.type == ALGO_DECRED) {
+    shift = work->data[116+3];
+    powdiff = (8 * (0x1d - 3)) - (8 * (shift - 3));
+    diff64 = data[29] & 0xFFFFFF;
+    if (!diff64) diff64 = 1;
+    double d = (double)work->pool->algorithm.diff_numerator / (double)diff64;
+    for (int m = shift; m < 29; m++) d *= 256.0;
+    for (int m = 29; m < shift; m++) d /= 256.0;
+    if (shift == 28) d *= 256.0; // testnet
+    return d;
+  }
+  else if (work->pool->algorithm.type == ALGO_SIA) {
+    unsigned char nbit[4];
+    hex2bin(nbit, work->pool->swork.nbit, 4);
+    shift = nbit[0];
+    powdiff = (8 * (0x1d - 3)) - (8 * (shift - 3));
+    diff64 = be32toh(*((uint32_t *)nbit)) & 0x0000000000FFFFFF;
+    numerator = work->pool->algorithm.diff_numerator << powdiff;
   }
   else {
-    uint8_t pow = work->data[72];
-    int powdiff = (8 * (0x1d - 3)) - (8 * (pow - 3));;
+    shift = work->data[72];
+    powdiff = (8 * (0x1d - 3)) - (8 * (shift - 3));;
     diff64 = be32toh(*((uint32_t *)(work->data + 72))) & 0x0000000000FFFFFF;
     numerator = work->pool->algorithm.diff_numerator << powdiff;
   }
@@ -2291,8 +2319,19 @@ static void gen_gbt_work(struct pool *pool, struct work *work)
   }
 
   // Neoscrypt doesn't calc_midstate()
-  if (pool->algorithm.type != ALGO_NEOSCRYPT) {
-    calc_midstate(work);
+  switch(pool->algorithm.type) {
+    case ALGO_DECRED:
+      pool->algorithm.calc_midstate(work);
+      break;
+    case ALGO_PASCAL:
+      pool->algorithm.calc_midstate(work);
+      break;
+    case ALGO_NEOSCRYPT:
+      // Neoscrypt doesn't calc_midstate()
+      break;
+    default:
+      calc_midstate(work);
+      break;
   }
   local_work++;
   work->pool = pool;
@@ -2474,6 +2513,51 @@ double le256todouble(const void *target)
 static bool getwork_decode(json_t *res_val, struct work *work)
 {
   size_t worklen = 128;
+  if (work->pool->algorithm.type == ALGO_CRE) worklen = 168;
+  else if (work->pool->algorithm.type == ALGO_DECRED) worklen = 192;
+  if (unlikely(!jobj_binary(res_val, "data", work->data, worklen, true))) {
+    if (opt_morenotices)
+      applog(LOG_ERR, "%s: JSON inval data", isnull(get_pool_name(work->pool), ""));
+    return false;
+  }
+
+  // Neoscrypt doesn't calc midstate
+  //if (work->pool->algorithm.type != ALGO_NEOSCRYPT) {
+  if ((work->pool->algorithm.type == ALGO_CRE || work->pool->algorithm.type == ALGO_SCRYPT) && (work->pool->algorithm.type != ALGO_NEOSCRYPT)) {
+    if (!jobj_binary(res_val, "midstate", work->midstate, sizeof(work->midstate), false)) {
+      // Calculate it ourselves
+      if (opt_morenotices) {
+        applog(LOG_DEBUG, "%s: Calculating midstate locally", isnull(get_pool_name(work->pool), ""));
+      }
+      //if (work->pool->algorithm.calc_midstate) work->pool->algorithm.calc_midstate(work);
+      if (work->pool->algorithm.type != ALGO_DECRED){
+        calc_midstate(work);
+      }
+      // FIXME
+      if (work->pool->algorithm.type == ALGO_DECRED){
+        work->pool->algorithm.calc_midstate(work);
+      }
+    }
+  }
+
+  if (unlikely(!jobj_binary(res_val, "target", work->target, sizeof(work->target), true))) {
+    if (opt_morenotices)
+      applog(LOG_ERR, "%s: JSON inval target", isnull(get_pool_name(work->pool), ""));
+    return false;
+  }
+  if (work->pool->algorithm.type == ALGO_DECRED) {
+    uint16_t vote = (uint16_t) (opt_vote << 1) | 1;
+    memcpy(&work->data[100], &vote, 2);
+    // some random extradata to make it unique
+    ((uint32_t*)work->data)[36] = (rand()*4);
+    ((uint32_t*)work->data)[37] = (rand()*4) << 8 | work->thr_id;
+  }
+  return true;
+}
+
+static bool getwork_decode_old(json_t *res_val, struct work *work)
+{
+  size_t worklen = 128;
   worklen = ((work->pool->algorithm.type == ALGO_CRE) ? sizeof(work->data) : worklen);
   if (unlikely(!jobj_binary(res_val, "data", work->data, worklen, true))) {
     if (opt_morenotices)
@@ -2488,7 +2572,9 @@ static bool getwork_decode(json_t *res_val, struct work *work)
       if (opt_morenotices) {
         applog(LOG_DEBUG, "%s: Calculating midstate locally", isnull(get_pool_name(work->pool), ""));
       }
-      calc_midstate(work);
+      if (work->pool->algorithm.type != ALGO_DECRED){
+        calc_midstate(work);
+      }
     }
   }
 
@@ -3384,16 +3470,25 @@ static bool submit_upstream_work(struct work *work, CURL *curl, char *curl_err_s
   }
   else
   {
-	  if (work->pool->algorithm.type == ALGO_CRE) {
-		endian_flip168(work->data, work->data);
-	  } else {
-		endian_flip128(work->data, work->data);
-	  }
+	  if (work->pool->algorithm.type == ALGO_DECRED) {
+    	    endian_flip180(work->data, work->data);
+  	  } else if (work->pool->algorithm.type == ALGO_CRE) {
+    	    endian_flip168(work->data, work->data);
+          } else {
+            endian_flip128(work->data, work->data);
+          }
+
 
 	  /* build hex string - Make sure to restrict to 80 bytes for Neoscrypt */
 	  int datasize = 128;
 	  if (work->pool->algorithm.type == ALGO_NEOSCRYPT) datasize = 80;
 	  else if (work->pool->algorithm.type == ALGO_CRE) datasize = 168;
+          else if (work->pool->algorithm.type == ALGO_DECRED) {
+            datasize = 192;
+            ((uint32_t*)work->data)[45] = 0x80000001UL;
+            ((uint32_t*)work->data)[46] = 0;
+            ((uint32_t*)work->data)[47] = 0x000005a0UL;
+          }
 	  hexstr = bin2hex(work->data, datasize);
 
 	  /* build JSON-RPC request */
@@ -4056,15 +4151,46 @@ static inline bool can_roll(struct work *work)
     work->rolls < 7000 && !stale_work(work, false));
 }
 
+static uint32_t _get_work_time(struct work *work)
+{
+  uint32_t *data = (uint32_t*) work->data;
+  uint32_t work_ntime = data[17];
+  if (work->pool && work->pool->algorithm.type == ALGO_DECRED) {
+    work_ntime = data[34];
+  }
+  return work_ntime;
+}
+
+static void _set_work_time(struct work *work, uint32_t ntime)
+{
+  uint32_t *data = (uint32_t*) work->data;
+  uint32_t *work_ntime = &data[17];
+  if (work->pool && work->pool->algorithm.type == ALGO_DECRED) {
+    work_ntime = &data[34];
+  }
+  (*work_ntime) = ntime;
+}
+
 static void roll_work(struct work *work)
 {
-  uint32_t *work_ntime;
+  uint32_t work_ntime;
   uint32_t ntime;
 
-  work_ntime = (uint32_t *)(work->data + 68);
-  ntime = be32toh(*work_ntime);
+ // FIXME?
+ // work_ntime = (uint32_t *)(work->data + 68);
+  work_ntime = _get_work_time(work);
+  ntime = be32toh(work_ntime);
   ntime++;
-  *work_ntime = htobe32(ntime);
+
+  if (work->pool->algorithm.type == ALGO_DECRED) {
+    uint32_t* data = (uint32_t*) work->data;
+    // dont mess with ntime, use extranonce
+    data[36]++;
+    data[37] = ((rand()*4) << 8) | work->thr_id;
+  } else {
+    //*work_ntime = htobe32(ntime);
+  _set_work_time(work, htobe32(ntime));
+  }
   local_work++;
   work->rolls++;
   work->blk.nonce = 0;
@@ -4120,6 +4246,12 @@ static void *submit_work_thread(void *userdata)
 static struct work *make_clone(struct work *work)
 {
   struct work *work_clone = copy_work(work);
+
+  if (work->pool->algorithm.type == ALGO_DECRED) {
+    // maybe not useful here
+    ((uint32_t*)work->data)[36] = (rand()*4);
+    ((uint32_t*)work->data)[37] = (rand()*4) << 8;
+  }
 
   work_clone->clone = true;
   cgtime((struct timeval *)&(work_clone->tv_cloned));
@@ -4239,20 +4371,27 @@ static void _copy_work(struct work *work, const struct work *base_work, int noff
     /* If we are passed an noffset the binary work->data ntime and
      * the work->ntime hex string need to be adjusted. */
     if (noffset) {
-      uint32_t *work_ntime = (uint32_t *)(work->data + 68);
-      uint32_t ntime = be32toh(*work_ntime);
-
+      uint32_t work_ntime = _get_work_time(work);
+      uint32_t ntime = be32toh(work_ntime);
       ntime += noffset;
-      *work_ntime = htobe32(ntime);
+      _set_work_time(work, htobe32(ntime));
       work->ntime = offset_ntime(base_work->ntime, noffset);
+      // FIXME?
+      // uint32_t *work_ntime = (uint32_t *)(work->data + 68);
+      // uint32_t ntime = be32toh(*work_ntime);
     } else
       work->ntime = strdup(base_work->ntime);
   } else if (noffset) {
-    uint32_t *work_ntime = (uint32_t *)(work->data + 68);
-    uint32_t ntime = be32toh(*work_ntime);
-
+    // FIXME?
+    //uint32_t *work_ntime = (uint32_t *)(work->data + 68);
+    //uint32_t ntime = be32toh(*work_ntime);
+    //
+    //ntime += noffset;
+    //*work_ntime = htobe32(ntime);
+    uint32_t work_ntime = _get_work_time(work);
+    uint32_t ntime = be32toh(work_ntime);
     ntime += noffset;
-    *work_ntime = htobe32(ntime);
+    _set_work_time(work, htobe32(ntime));
   }
   if (base_work->coinbase)
     work->coinbase = strdup(base_work->coinbase);
@@ -4717,7 +4856,11 @@ static bool test_work_current(struct work *work)
   if (work->mandatory)
     return ret;
 
-  swap256(bedata, work->data + 4);
+  if (pool->algorithm.type == ALGO_SIA)
+    flip32(bedata, work->data);
+  else
+    swap256(bedata, work->data + 4);
+
   __bin2hex(hexstr, bedata, 32);
 
   /* Search to see if this block exists yet and if not, consider it a
@@ -6028,10 +6171,10 @@ static void *stratum_sthread(void *userdata)
   size_t s_size = 4096;
   char *s = (char*) malloc(s_size);
   while (42) {
-    char noncehex[12], nonce2hex[20];
+    char noncehex[20], nonce2hex[33];
     struct stratum_share *sshare;
     uint32_t *hash32, nonce;
-    unsigned char nonce2[8];
+    unsigned char nonce2[16];
     uint64_t *nonce2_64;
     struct work *work;
     bool submitted = false;
@@ -6144,12 +6287,32 @@ static void *stratum_sthread(void *userdata)
       applog(LOG_DEBUG, "stratum_sthread() algorithm = %s", pool->algorithm.name);
 
       // Neoscrypt is little endian
-      if (pool->algorithm.type == ALGO_NEOSCRYPT)
-        nonce = htobe32(*((uint32_t *)(work->data + 76)));
-      else
-        nonce = *((uint32_t *)(work->data + 76));
+      switch (pool->algorithm.type) {
+        case ALGO_NEOSCRYPT:
+          nonce = htobe32(*((uint32_t *)(work->data + 76)));
+          break;
+        case ALGO_DECRED:
+          nonce = *((uint32_t *)(work->data + 140));
+          break;
+        case ALGO_LBRY:
+          nonce = *((uint32_t *)(work->data + 108));
+          break;
+        case ALGO_SIA:
+          nonce = htobe32(*((uint32_t *)(work->data + 32)));
+          break;
+        case ALGO_PASCAL:
+          nonce = htobe32(*((uint32_t *)(work->data + 196)));
+          break;
+        default:
+          nonce = *((uint32_t *)(work->data + 76));
+          break;
+      }
 
       __bin2hex(noncehex, (const unsigned char *)&nonce, 4);
+
+      // Sia nonces are actually 64 bits long
+      if (pool->algorithm.type == ALGO_SIA)
+        strcat(noncehex, "00000000");
 
       *((uint64_t *)nonce2) = htole64(work->nonce2);
       __bin2hex(nonce2hex, nonce2, work->nonce2_len);
@@ -6160,11 +6323,16 @@ static void *stratum_sthread(void *userdata)
       sshare->id = swork_id++;
       mutex_unlock(&sshare_lock);
 
-      snprintf(s, s_size,
-        "{\"params\": [\"%s\", \"%s\", \"%s\", \"%s\", \"%s\"], \"id\": %d, \"method\": \"mining.submit\"}",
-        pool->rpc_user, work->job_id, nonce2hex, work->ntime, noncehex, sshare->id);
+      if (pool->algorithm.type == ALGO_DECRED && opt_vote) {
+        snprintf(s, sizeof(s),
+          "{\"params\": [\"%s\", \"%s\", \"%s\", \"%s\", \"%s\", \"%04x\"], \"id\": %d, \"method\": \"mining.submit\"}",
+          pool->rpc_user, work->job_id, nonce2hex, work->ntime, noncehex, (opt_vote << 1) | 1, sshare->id);
+      } else {
+        snprintf(s, s_size,
+          "{\"params\": [\"%s\", \"%s\", \"%s\", \"%s\", \"%s\"], \"id\": %d, \"method\": \"mining.submit\"}",
+          pool->rpc_user, work->job_id, nonce2hex, work->ntime, noncehex, sshare->id);
+      }
     }
-
     applog(LOG_INFO, "Submitting share %08lx to %s", (long unsigned int)htole32(hash32[6]), get_pool_name(pool));
 
     /* Try resubmitting for up to 2 minutes if we fail to submit
@@ -6863,17 +7031,32 @@ static void gen_stratum_work(struct pool *pool, struct work *work)
     return;
   }
 
-  unsigned char merkle_root[32], merkle_sha[64];
+  unsigned char merkle_root[32], merkle_sha[65];
   uint32_t *data32, *swap32;
   uint64_t nonce2le;
   int i, j;
+  unsigned char *cbbuf;
 
   cg_wlock(&pool->data_lock);
 
+  if (pool->algorithm.type == ALGO_PASCAL) {
+    /* TODO: refactor this */
+    for (i = 0; i < 56; i += 8) {
+      if (((pool->nonce2 >> i) & 0xff) < 0x2d) pool->nonce2 = (pool->nonce2 & (0xffffffffffffff00 << i)) + (0x002d2d2d2d2d2d2d >> (48 - i));
+      if (((pool->nonce2 >> i) & 0xff) > 0xfe) pool->nonce2 = (pool->nonce2 & (0xffffffffffffff00 << i)) + (0x012d2d2d2d2d2d2d >> (48 - i));
+    }
+    if (((pool->nonce2 >> 56) & 0xff) < 0x2d) pool->nonce2 = 0x2d2d2d2d2d2d2d2d;
+    if (((pool->nonce2 >> 56) & 0xff) > 0xfe) pool->nonce2 = 0x2d2d2d2d2d2d2d2d;
+  }
   /* Update coinbase. Always use an LE encoded nonce2 to fill in values
   * from left to right and prevent overflow errors with small n2sizes */
   nonce2le = htole64(pool->nonce2);
-  memcpy(pool->coinbase + pool->nonce2_offset, &nonce2le, pool->n2size);
+  if (pool->algorithm.type != ALGO_DECRED) {
+    /* Update coinbase. Always use an LE encoded nonce2 to fill in values
+    * from left to right and prevent overflow errors with small n2sizes */
+    memcpy(pool->coinbase + pool->nonce2_offset, &nonce2le, pool->n2size);
+  }
+
   work->nonce2 = pool->nonce2++;
   work->nonce2_len = pool->n2size;
 
@@ -6881,12 +7064,34 @@ static void gen_stratum_work(struct pool *pool, struct work *work)
   cg_dwlock(&pool->data_lock);
 
   /* Generate merkle root */
-  pool->algorithm.gen_hash(pool->coinbase, pool->swork.cb_len, merkle_root);
-  memcpy(merkle_sha, merkle_root, 32);
-  for (i = 0; i < pool->swork.merkles; i++) {
-    memcpy(merkle_sha + 32, pool->swork.merkle_bin[i], 32);
-    gen_hash(merkle_sha, 64, merkle_root);
-    memcpy(merkle_sha, merkle_root, 32);
+  switch (pool->algorithm.type) {
+    case ALGO_SIA:
+      cbbuf = alloca(1 + pool->swork.cb_len);
+      cbbuf[0] = 0;
+      memcpy(cbbuf + 1, pool->coinbase, pool->swork.cb_len);
+      pool->algorithm.gen_hash(cbbuf, 1 + pool->swork.cb_len, merkle_root);
+      merkle_sha[0] = 1;
+      memcpy(merkle_sha + 33, merkle_root, 32);
+      for (i = 0; i < pool->swork.merkles; i++) {
+        memcpy(merkle_sha + 1, pool->swork.merkle_bin[i], 32);
+        pool->algorithm.gen_hash(merkle_sha, 65, merkle_root);
+        memcpy(merkle_sha + 33, merkle_root, 32);
+      }
+      memcpy(merkle_sha, merkle_root, 32);
+      break;
+    case ALGO_DECRED:
+    case ALGO_PASCAL:
+      break;
+    default:
+      /* Generate merkle root */
+      pool->algorithm.gen_hash(pool->coinbase, pool->swork.cb_len, merkle_root);
+      memcpy(merkle_sha, merkle_root, 32);
+      for (i = 0; i < pool->swork.merkles; i++) {
+        memcpy(merkle_sha + 32, pool->swork.merkle_bin[i], 32);
+        gen_hash(merkle_sha, 64, merkle_root);
+        memcpy(merkle_sha, merkle_root, 32);
+      }
+      break;
   }
 
   applog(LOG_DEBUG, "[THR%d] gen_stratum_work() - algorithm = %s", work->thr_id, pool->algorithm.name);
@@ -6919,6 +7124,27 @@ static void gen_stratum_work(struct pool *pool, struct work *work)
     ((uint32_t *)work->data)[18] = be32toh(temp);
     ((uint32_t *)work->data)[20] = 0x80000000;
     ((uint32_t *)work->data)[31] = 0x00000280;
+  } else if (pool->algorithm.type == ALGO_PASCAL) {
+    uint32_t temp;
+    memcpy(work->data, pool->coinbase, pool->swork.cb_len);
+    hex2bin((unsigned char *)&temp, pool->swork.ntime, 4);
+    /* Add the nbits (big endianess). */
+    ((uint32_t *)work->data)[48] = be32toh(temp);
+    ((uint32_t *)work->data)[49] = 0;
+  }
+  else if (pool->algorithm.type == ALGO_DECRED) {
+    uint16_t vote = (uint16_t) (opt_vote << 1) | 1;
+    size_t nonce2_offset = MIN(pool->n1_len, 36);
+    memcpy(work->data, pool->header_bin, 4); // version
+    flip32(work->data + 4, pool->header_bin + 4); // prevhash
+    memcpy(work->data + 4 + 32, pool->coinbase, MIN((int)pool->swork.cb_len, 108));
+    memcpy(work->data + 100, &vote, 2);
+    for (i = 36; i < 45; i++)
+      ((uint32_t *)work->data)[i] = 0;
+    memcpy(work->data + 144, pool->nonce1bin, nonce2_offset);
+    memcpy(work->data + 144 + nonce2_offset, &nonce2le, pool->n2size);
+    size_t extranonce_len = MAX((int)pool->swork.cb_len - pool->nonce2_offset - pool->n2size, 0);
+    memcpy(work->data + 180 - extranonce_len, pool->coinbase + pool->nonce2_offset + pool->n2size, extranonce_len);
   }
   else {
     data32 = (uint32_t *)merkle_sha;
@@ -6942,25 +7168,43 @@ static void gen_stratum_work(struct pool *pool, struct work *work)
 
   if (opt_debug) {
     char *header, *merkle_hash;
-
-    header = bin2hex(work->data, 128);
-    merkle_hash = bin2hex((const unsigned char *)merkle_root, 32);
-    applog(LOG_DEBUG, "[THR%d] Generated stratum merkle %s", work->thr_id, merkle_hash);
+    int datasize = 128;
+    if (pool->algorithm.type == ALGO_DECRED) datasize = 180;
+    if (pool->algorithm.type == ALGO_PASCAL) datasize = 256;
+    header = bin2hex(work->data, datasize);
+    switch (pool->algorithm.type) {
+      case ALGO_PASCAL:
+        break;
+      case ALGO_DECRED:
+        break;
+      default:
+        merkle_hash = bin2hex((const unsigned char *)merkle_root, 32);
+        applog(LOG_DEBUG, "[THR%d] Generated stratum merkle %s", work->thr_id, merkle_hash);
+        free(merkle_hash);
+        break;
+    }
     applog(LOG_DEBUG, "[THR%d] Generated stratum header %s", work->thr_id, header);
     applog(LOG_DEBUG, "[THR%d] Work job_id %s nonce2 %"PRIu64" ntime %s", work->thr_id, work->job_id,
-           work->nonce2, work->ntime);
+      work->nonce2, work->ntime);
     free(header);
-    free(merkle_hash);
   }
 
-  // For Neoscrypt use set_target_neoscrypt() function
-  if (pool->algorithm.type == ALGO_NEOSCRYPT) {
-    set_target_neoscrypt(work->target, work->sdiff, work->thr_id);
-  } else {
-    calc_midstate(work);
-    set_target(work->target, work->sdiff, pool->algorithm.diff_multiplier2, work->thr_id);
+  switch(pool->algorithm.type) {
+    case ALGO_DECRED:
+    case ALGO_PASCAL:
+      pool->algorithm.calc_midstate(work);
+      set_target(work->target, work->sdiff, pool->algorithm.diff_multiplier2, work->thr_id);
+      break;
+    case ALGO_NEOSCRYPT:
+      set_target_neoscrypt(work->target, work->sdiff, work->thr_id);
+      break;
+    default:
+      calc_midstate(work);
+      set_target(work->target, work->sdiff, pool->algorithm.diff_multiplier2, work->thr_id);
+      break;
   }
 
+  applog(LOG_DEBUG, "[THR%d] Got here too", work->thr_id);
   local_work++;
   work->pool = pool;
   work->stratum = true;
@@ -7650,10 +7894,13 @@ void inc_hw_errors(struct thr_info *thr)
 static void rebuild_nonce(struct work *work, uint32_t nonce)
 {
   uint32_t nonce_pos = 76;
-  if (work->pool->algorithm.type == ALGO_CRE)
-    nonce_pos = 140;
-  else if (work->pool->algorithm.type == ALGO_CRYPTONIGHT)
-    nonce_pos = 39;
+  applog(LOG_DEBUG, "REBUILD_NONCE: inside");
+  if (work->pool->algorithm.type == ALGO_CRE) nonce_pos = 140;
+  else if (work->pool->algorithm.type == ALGO_PASCAL) nonce_pos = 196;
+  else if (work->pool->algorithm.type == ALGO_DECRED) nonce_pos = 140;
+  else if (work->pool->algorithm.type == ALGO_LBRY) nonce_pos = 108;
+  else if (work->pool->algorithm.type == ALGO_SIA) nonce_pos = 32;
+  else if (work->pool->algorithm.type == ALGO_CRYPTONIGHT) nonce_pos = 39;
 
   if (work->pool->algorithm.type == ALGO_ETHASH) {
     uint64_t *work_nonce = (uint64_t *)(work->data + 32);
@@ -7664,6 +7911,7 @@ static void rebuild_nonce(struct work *work, uint32_t nonce)
 
     *work_nonce = htole32(nonce);
   }
+  applog(LOG_DEBUG, "REBUILD_NONCE: calling regenhash");
 
   work->pool->algorithm.regenhash(work);
 }
@@ -7673,25 +7921,44 @@ bool test_nonce(struct work *work, uint32_t nonce)
 {
   uint32_t *hash_32 = (uint32_t *)(work->hash + 28);
   uint32_t diff1targ;
-
+  uint32_t grr;
+  uint64_t target;
+  uint64_t grr_target;
+  uint32_t grr_hash;
+  uint32_t grr_hash2;
+  applog(LOG_DEBUG, "TEST_NONCE: calling rebuild_nonce");
   rebuild_nonce(work, nonce);
 
   // for Neoscrypt, the diff1targ value is in work->target
-  if (work->pool->algorithm.type == ALGO_NEOSCRYPT || work->pool->algorithm.type == ALGO_PLUCK
-    || work->pool->algorithm.type == ALGO_YESCRYPT || work->pool->algorithm.type == ALGO_YESCRYPT_MULTI) {
-    diff1targ = ((uint32_t *)work->target)[7];
+  switch (work->pool->algorithm.type) {
+    case ALGO_NEOSCRYPT:
+    case ALGO_PLUCK:
+    case ALGO_YESCRYPT:
+    case ALGO_YESCRYPT_MULTI:
+      diff1targ = ((uint32_t *)work->target)[7];
+      break;
+    case ALGO_ETHASH:
+      target = *(uint64_t*) (work->device_target + 24);
+      return (bswap_64(*(uint64_t*) work->hash) <= target);
+      break;
+    case ALGO_CRYPTONIGHT:
+      return (((uint32_t *)work->hash)[7] <= work->XMRTarget);
+      break;
+    default:
+      diff1targ = work->pool->algorithm.diff1targ;
+      break;
   }
-  else if (work->pool->algorithm.type == ALGO_ETHASH) {
-    uint64_t target = *(uint64_t*) (work->device_target + 24);
-    return (bswap_64(*(uint64_t*) work->hash) <= target);
-  }
-  else if (work->pool->algorithm.type == ALGO_CRYPTONIGHT) {
-    return (((uint32_t *)work->hash)[7] <= work->XMRTarget);
-  }
-  else {
-    diff1targ = work->pool->algorithm.diff1targ;
-  }
-
+  applog(LOG_DEBUG, "TEST_NONCE: returning result of rebuild");
+  applog(LOG_DEBUG, "TEST_NONCE: diff1targ is %d", diff1targ);
+  //grr = le32toh(*hash_32);
+  grr = ((uint32_t *)work->target)[7];
+  applog(LOG_DEBUG, "TEST_NONCE: grr is %d", grr);
+  grr_target = *(uint64_t*) (work->device_target + 24);
+  applog(LOG_DEBUG, "TEST_NONCE: grr_target is %d", grr_target);
+  grr_hash = bswap_64(*(uint64_t*) work->hash);
+  applog(LOG_DEBUG, "TEST_NONCE: grr_hash is %d", grr_hash);
+  grr_hash2 = ((uint32_t *)work->hash)[7];
+  applog(LOG_DEBUG, "TEST_NONCE: grr_hash2 is %d", grr_hash2);
   return (le32toh(*hash_32) <= diff1targ);
 }
 
@@ -7765,6 +8032,7 @@ bool submit_nonce(struct thr_info *thr, struct work *work, uint32_t nonce)
     return true;
   }
 
+  applog(LOG_DEBUG, "SUBMIT_NONCE: calling test_nonce");
   if (test_nonce(work, nonce)) {
     submit_tested_work(thr, work);
     return true;

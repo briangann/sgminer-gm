@@ -36,10 +36,20 @@ typedef enum {
   ALGO_YESCRYPT_MULTI,
   ALGO_BLAKECOIN,
   ALGO_BLAKE,
+  ALGO_DECRED,
   ALGO_VANILLA,
   ALGO_ETHASH,
   ALGO_CRYPTONIGHT,
-  ALGO_EQUIHASH
+  ALGO_EQUIHASH,
+  ALGO_LYRA2Z,
+  ALGO_SIA,
+  ALGO_LBRY,
+  ALGO_XEVAN,
+  ALGO_PASCAL,
+  ALGO_SKUNK,
+  ALGO_TRIBUS,
+  ALGO_SIBCOIN,
+  ALGO_PHI
 } algorithm_type_t;
 
 extern const char *algorithm_type_str[];
@@ -74,6 +84,7 @@ typedef struct _algorithm_t {
   long rw_buffer_size;
   cl_command_queue_properties cq_properties;
   void(*regenhash)(struct work *);
+  void(*calc_midstate)(struct work *);
   void(*precalc_hash)(struct _dev_blk_ctx *, uint32_t *, uint32_t *);
   cl_int(*queue_kernel)(struct __clState *, struct _dev_blk_ctx *, cl_uint);
   void(*gen_hash)(const unsigned char *, unsigned int, unsigned char *);
@@ -97,6 +108,7 @@ typedef struct _algorithm_settings_t
 	long rw_buffer_size;
 	cl_command_queue_properties cq_properties;
 	void     (*regenhash)(struct work *);
+        void     (*calc_midstate)(struct work *);
 	void     (*precalc_hash)(struct _dev_blk_ctx *, uint32_t *, uint32_t *);
 	cl_int   (*queue_kernel)(struct __clState *, struct _dev_blk_ctx *, cl_uint);
 	void     (*gen_hash)(const unsigned char *, unsigned int, unsigned char *);

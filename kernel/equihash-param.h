@@ -1,5 +1,5 @@
 // Gateless Gate, a Zcash miner
-// Copyright 2016 zawawa @ bitcointalk.org
+// Copyright 2016-2017 zawawa @ bitcointalk.org
 //
 // The initial version of this software was based on:
 // SILENTARMY v5
@@ -24,16 +24,15 @@
 #define uint uint32_t
 #define uchar uint8_t
 #endif
-#ifdef cl_amd_fp64
+#if defined(cl_amd_fp64) && !defined(AMD)
 #define AMD
 #endif
-#if (defined(__Tahiti__) || defined(__Pitcairn__) || defined(__Capeverde__) || defined(__Oland__)) && !defined(AMD_LEGACY)
+#if (defined(__Tahiti__) || defined(__Pitcairn__) || defined(__Capeverde__) || defined(__Oland__) || defined(__Hainan__)) && !defined(AMD_LEGACY)
 #define AMD_LEGACY
 #endif
 #ifdef cl_nv_pragma_unroll
 #define NVIDIA
 #endif
-//#define ENABLE_DEBUG
 
 
 
@@ -41,110 +40,130 @@
 // Parameters for Hash Tables
 //
 
-// There are PARAM_K - 1 hash tables, and each hash table has NR_ROWS rows.
-// Each row contains NR_SLOTS slots.
+#define _NR_ROWS_LOG(round)      12
+#define _NR_SLOTS(round)         688
+#define _LDS_COLL_SIZE(round)    ((round) <= 6 ? 784 : 800)
+#define _NR_ROWS(round)          4096
+#define MAX_NR_ROWS              4096
 
-#define NR_ROWS_LOG              12  /* 12, 13, 14, 15, or 16. */
-#define NR_SLOTS                 684
+#define LOCAL_WORK_SIZE_ROUND0         WORKSIZE
+#define LOCAL_WORK_SIZE                WORKSIZE
+#define LOCAL_WORK_SIZE_ROUND8         WORKSIZE
+#define LOCAL_WORK_SIZE_POTENTIAL_SOLS WORKSIZE  
+#define LOCAL_WORK_SIZE_SOLS           WORKSIZE
 
-#define LDS_COLL_SIZE            (NR_SLOTS * 67 / 100)
+#define MAX_SLOT_LEN           32
+#define _SLOT_LEN(round)       ((UINTS_IN_XI(round) >= 4) ? 32 : (UINTS_IN_XI(round) >= 2) ? 16 : 8)
 
-#define LOCAL_WORK_SIZE          WORKSIZE  
-#define LOCAL_WORK_SIZE_SOLS     WORKSIZE
-#define LOCAL_WORK_SIZE_ROUND0   WORKSIZE
-#define LOCAL_WORK_SIZE_POTENTIAL_SOLS WORKSIZE
-
-#define ROUND0_INPUTS_PER_WORK_ITEM 1
-
-#if defined(AMD)
-#define THREADS_PER_WRITE(round) (((round) <= 5) ? 2 : 1)
-#else
-#define THREADS_PER_WRITE(round) 1
-#endif
-
-#if defined(AMD) && !defined(AMD_LEGACY)
-#define OPTIM_24BYTE_WRITES
-#endif
-#define OPTIM_16BYTE_WRITES
-#if !defined(AMD_LEGACY)
-#define OPTIM_8BYTE_WRITES
-#endif
-
-//#define OPTIM_FAST_INTEGER_DIVISION
-//#define OPTIM_COMPACT_ROW_COUNTERS
+//#define OPTIM_UINT_ROW_COUNTERS
+#define OPTIM_FAST_INTEGER_DIVISION
+#define OPTIM_COMPACT_ROW_COUNTERS
+#define OPTIM_IGNORE_ROW_COUNTER_OVERFLOWS
 
 #define ADJUSTED_LDS_ARRAY_SIZE(n) (n)
 
 
 
-#define PARAM_N				   200
-#define PARAM_K			       9
-#define PREFIX                 (PARAM_N / (PARAM_K + 1))
-#define NR_INPUTS              (1 << PREFIX)
-#define NR_ROWS                         (1 << NR_ROWS_LOG)
-// Length of 1 element (slot) in byte
-#define SLOT_LEN                 32
-#define ADJUSTED_SLOT_LEN(round) (((round) <= 5) ? SLOT_LEN : SLOT_LEN - 16)
-// Total size of hash table
-#define HT_SIZE				(NR_ROWS * NR_SLOTS * SLOT_LEN)
-// Length of Zcash block header, nonce (part of header)
-#define ZCASH_BLOCK_HEADER_LEN		140
-// Offset of nTime in header
-#define ZCASH_BLOCK_OFFSET_NTIME        (4 + 3 * 32)
-// Length of nonce
-#define ZCASH_NONCE_LEN			32
-// Length of encoded representation of solution size
-#define ZCASH_SOLSIZE_LEN		3
-// Solution size (1344 = 0x540) represented as a compact integer, in hex
-#define ZCASH_SOLSIZE_HEX               "fd4005"
-// Length of encoded solution (512 * 21 bits / 8 = 1344 bytes)
-#define ZCASH_SOL_LEN                   ((1 << PARAM_K) * (PREFIX + 1) / 8)
-// Last N_ZERO_BYTES of nonce must be zero due to my BLAKE2B optimization
-#define N_ZERO_BYTES			12
-// Number of bytes Zcash needs out of Blake
-#define ZCASH_HASH_LEN                  50
-// Number of wavefronts per SIMD for the Blake kernel.
-// Blake is ALU-bound (beside the atomic counter being incremented) so we need
-// at least 2 wavefronts per SIMD to hide the 2-clock latency of integer
-// instructions. 10 is the max supported by the hw.
-#define BLAKE_WPS               	10
-// Maximum number of solutions reported by kernel to host
-#define MAX_SOLS			11
-#define MAX_POTENTIAL_SOLS  4096
-// Length of SHA256 target
-#define SHA256_TARGET_LEN               (256 / 8)
+#if defined(__GCNMINC__)
 
-#ifdef OPTIM_COMPACT_ROW_COUNTERS
-#define BITS_PER_ROW ((NR_SLOTS < 3)    ? 2 : \
-	                          (NR_SLOTS < 7)    ? 3 : \
-	                          (NR_SLOTS < 15)   ? 4 : \
-	                          (NR_SLOTS < 31)   ? 5 : \
-	                          (NR_SLOTS < 63)   ? 6 : \
-	                          (NR_SLOTS < 255)  ? 8 : \
-	                          (NR_SLOTS < 1023) ? 10 : \
-                                                         16)
+#undef  _LDS_COLL_SIZE
+#define _LDS_COLL_SIZE(round)    512
+
+#define OPTIM_16BYTE_READS
+#define OPTIM_16BYTE_WRITES
+#define OPTIM_8BYTE_WRITES
+#define THREADS_PER_WRITE(round) 1 // (((round) <= 5) ? 2 : 1)
+#define OPTIM_ON_THE_FLY_COLLISION_SEARCH
+
+#elif defined(AMD_LEGACY)
+
+#define OPTIM_16BYTE_READS
+#define OPTIM_16BYTE_WRITES
+#define OPTIM_8BYTE_WRITES
+#define THREADS_PER_WRITE(round) (((round) <= 5) ? 2 : 1)
+#define OPTIM_ON_THE_FLY_COLLISION_SEARCH
+
+#elif defined(AMD)
+
+#define OPTIM_24BYTE_WRITES
+#define OPTIM_16BYTE_WRITES
+#define OPTIM_8BYTE_WRITES
+#define THREADS_PER_WRITE(round) (((round) <= 5) ? 2 : 1)
+#define OPTIM_ON_THE_FLY_COLLISION_SEARCH
+
+#elif defined(NVIDIA)
+
+#define OPTIM_8BYTE_READS
+#define OPTIM_16BYTE_WRITES
+#define OPTIM_8BYTE_WRITES
+#define THREADS_PER_WRITE(round) 1
+
 #else
-#define BITS_PER_ROW  ((NR_SLOTS < 3)   ? 2 : \
-	                          (NR_SLOTS < 15)  ? 4 : \
-	                          (NR_SLOTS < 255) ? 8 : \
-                                                        16)
+
+#define OPTIM_16BYTE_WRITES
+#define OPTIM_8BYTE_WRITES
+#define THREADS_PER_WRITE(round) 1
+
 #endif
+
+
+
+#define UINTS_IN_XI(round) (((round) == 0) ? 6 : \
+                            ((round) == 1) ? 6 : \
+                            ((round) == 2) ? 5 : \
+                            ((round) == 3) ? 5 : \
+                            ((round) == 4) ? 4 : \
+                            ((round) == 5) ? 4 : \
+                            ((round) == 6) ? 3 : \
+                            ((round) == 7) ? 2 : \
+                                             1)
+
+
+
+#define MAX_PARAM_N              200
+#define MAX_PARAM_K              9
+#define PREFIX(n, k)             ((n) / ((k) + 1))
+#define MAX_PREFIX               PREFIX(200, 9)
+#define NR_INPUTS(n, k)          (1 << PREFIX((n), (k)))
+#define HASH_TABLE_SIZE(round)	 (_NR_ROWS(round) * (_NR_SLOTS(round) + 64) * _SLOT_LEN(round))
+#define ZCASH_BLOCK_HEADER_LEN	 140
+#define ZCASH_BLOCK_OFFSET_NTIME (4 + 3 * 32)
+#define ZCASH_NONCE_LEN			 32
+#define ZCASH_SOLSIZE_LEN	     3
+#define ZCASH_SOL_LEN(n, k)      ((1 << (k)) * (PREFIX((n), (k)) + 1) / 8)  // 1344
+#define ZCASH_HASH_LEN(n, k)     (((k) + 1) * ((PREFIX((n), (k)) + 7) / 8)) // 50
+#define MAX_SOLS			     11
+#define MAX_POTENTIAL_SOLS       4096
+#define SHA256_TARGET_LEN        (256 / 8)
+
+
+
+#ifdef OPTIM_UINT_ROW_COUNTERS
+#define BITS_PER_ROW  32
+#define ROWS_PER_UINT 1
+#define ROW_MASK      0xffffffff
+#elif defined(OPTIM_COMPACT_ROW_COUNTERS)
+#define BITS_PER_ROW  10
 #define ROWS_PER_UINT (32 / BITS_PER_ROW)
 #define ROW_MASK      ((1 << BITS_PER_ROW) - 1)
+#else
+#define BITS_PER_ROW  16
+#define ROWS_PER_UINT (32 / BITS_PER_ROW)
+#define ROW_MASK      ((1 << BITS_PER_ROW) - 1)
+#endif
 
-
-#define RC_SIZE ((NR_ROWS * 4 + ROWS_PER_UINT - 1) / ROWS_PER_UINT)
+#define ROW_COUNTERS_SIZE (((MAX_NR_ROWS + ROWS_PER_UINT - 1) / ROWS_PER_UINT) * sizeof(uint))
 
 
 
 // An (uncompressed) solution stores (1 << PARAM_K) 32-bit values
-#define SOL_SIZE			((1 << PARAM_K) * 4)
+#define SOL_SIZE(k)			((1 << (k)) * 4)
 typedef struct	sols_s
 {
     uint	nr;
     uint	likely_invalids;
     uchar	valid[MAX_SOLS];
-    uint	values[MAX_SOLS][(1 << PARAM_K)];
+    uint	values[MAX_SOLS][(1 << MAX_PARAM_K)];
 }		sols_t;
 
 typedef struct	potential_sols_s
@@ -153,57 +172,19 @@ typedef struct	potential_sols_s
     uint	values[MAX_POTENTIAL_SOLS][2];
 } potential_sols_t;
 
-#if NR_ROWS_LOG <= 12 && NR_SLOTS <= (1 << 10)
+#define INPUT_ENCODING_SLOT_BITS(round) ((32 - _NR_ROWS_LOG(round)) / 2)
+#define INPUT_ENCODING_SLOT_MASK(round) ((1 << INPUT_ENCODING_SLOT_BITS(round)) - 1)
+#define INPUT_ENCODING_ROW_POS(round)   (INPUT_ENCODING_SLOT_BITS(round) * 2)
 
-#define ENCODE_INPUTS(row, slot0, slot1) \
-    ((row << 20) | ((slot1 & 0x3ff) << 10) | (slot0 & 0x3ff))
-#define DECODE_ROW(REF)   (REF >> 20)
-#define DECODE_SLOT1(REF) ((REF >> 10) & 0x3ff)
-#define DECODE_SLOT0(REF) (REF & 0x3ff)
+#define ENCODE_INPUTS(round, row, slot0, slot1) (  ( (row)                                      << INPUT_ENCODING_ROW_POS(round)  ) \
+                                                 | (((slot1) & INPUT_ENCODING_SLOT_MASK(round)) << INPUT_ENCODING_SLOT_BITS(round)) \
+                                                 | ( (slot0) & INPUT_ENCODING_SLOT_MASK(round)                                    ))
 
-#elif NR_ROWS_LOG <= 14 && NR_SLOTS <= (1 << 9)
+#define DECODE_ROW(round, ref)   ((ref) >> INPUT_ENCODING_ROW_POS(round))
+#define DECODE_SLOT1(round, ref) (((ref) >> INPUT_ENCODING_SLOT_BITS(round)) & INPUT_ENCODING_SLOT_MASK(round))
+#define DECODE_SLOT0(round, ref) ( (ref)                                     & INPUT_ENCODING_SLOT_MASK(round))
 
-#define ENCODE_INPUTS(row, slot0, slot1) \
-    ((row << 18) | ((slot1 & 0x1ff) << 9) | (slot0 & 0x1ff))
-#define DECODE_ROW(REF)   (REF >> 18)
-#define DECODE_SLOT1(REF) ((REF >> 9) & 0x1ff)
-#define DECODE_SLOT0(REF) (REF & 0x1ff)
 
-#elif NR_ROWS_LOG <= 16 && NR_SLOTS <= (1 << 8)
-
-#define ENCODE_INPUTS(row, slot0, slot1) \
-    ((row << 16) | ((slot1 & 0xff) << 8) | (slot0 & 0xff))
-#define DECODE_ROW(REF)   (REF >> 16)
-#define DECODE_SLOT1(REF) ((REF >> 8) & 0xff)
-#define DECODE_SLOT0(REF) (REF & 0xff)
-
-#elif NR_ROWS_LOG <= 18 && NR_SLOTS <= (1 << 7)
-
-#define ENCODE_INPUTS(row, slot0, slot1) \
-    ((row << 14) | ((slot1 & 0x7f) << 7) | (slot0 & 0x7f))
-#define DECODE_ROW(REF)   (REF >> 14)
-#define DECODE_SLOT1(REF) ((REF >> 7) & 0x7f)
-#define DECODE_SLOT0(REF) (REF & 0x7f)
-
-#elif NR_ROWS_LOG == 19 && NR_SLOTS <= (1 << 6)
-
-#define ENCODE_INPUTS(row, slot0, slot1) \
-    ((row << 13) | ((slot1 & 0x3f) << 6) | (slot0 & 0x3f)) /* 1 spare bit */
-#define DECODE_ROW(REF)   (REF >> 13)
-#define DECODE_SLOT1(REF) ((REF >> 6) & 0x3f)
-#define DECODE_SLOT0(REF) (REF & 0x3f)
-
-#elif NR_ROWS_LOG == 20 && NR_SLOTS <= (1 << 6)
-
-#define ENCODE_INPUTS(row, slot0, slot1) \
-    ((row << 12) | ((slot1 & 0x3f) << 6) | (slot0 & 0x3f))
-#define DECODE_ROW(REF)   (REF >> 12)
-#define DECODE_SLOT1(REF) ((REF >> 6) & 0x3f)
-#define DECODE_SLOT0(REF) (REF & 0x3f)
-
-#else
-#error "unsupported NR_ROWS_LOG"
-#endif
 
 #define NEXT_PRIME_NO(n) \
 	(((n) <= 2) ? 2 : \
@@ -395,10 +376,4 @@ typedef struct	potential_sols_s
 	((n) <= 32768) ? 32768 : \
                      (n))
 
-#if NR_SLOTS < 255
-#define SLOT_INDEX_TYPE uchar
-#elif NR_SLOTS < 65535
 #define SLOT_INDEX_TYPE ushort
-#else
-#error "Unsupported NR_SLOTS"
-#endif

@@ -1365,8 +1365,15 @@ static bool opencl_thread_init(struct thr_info *thr)
 static bool opencl_prepare_work(struct thr_info __maybe_unused *thr, struct work *work)
 {
   work->blk.work = work;
-  if (work->pool->algorithm.precalc_hash)
-    work->pool->algorithm.precalc_hash(&work->blk, 0, (uint32_t *)(work->data));
+  if (work->pool->algorithm.precalc_hash && !work->midstate_done) {
+    if (work->midstate) {
+      work->pool->algorithm.precalc_hash(&work->blk, (uint32_t *)(work->midstate), (uint32_t *)(work->data));
+    }
+    else {
+      work->pool->algorithm.precalc_hash(&work->blk, 0, (uint32_t *)(work->data));
+    }
+    work->midstate_done = true;
+  }
   thr->pool_no = work->pool->pool_no;
 
   return true;
@@ -1444,7 +1451,9 @@ static int64_t opencl_scanhash(struct thr_info *thr, struct work *work,
           sols->nr = MAX_SOLS;
         }
         for (int sol_i = 0; sol_i < sols->nr; sol_i++)
-          ret += equihash_verify_sol(work, sols, sol_i);
+          ret += equihash_verify_sol(work, sols, sol_i, 200, 9);
+        //for (int sol_i = 0; sol_i < sols->nr; sol_i++)
+         // ret += equihash_verify_sol(work, sols, sol_i);
       }
       else {
         applog(LOG_ERR, "Error %d: Reading result buffer for ALGO_EQUIHASH failed. (clEnqueueReadBuffer)", status);
@@ -1637,7 +1646,10 @@ static void opencl_thread_shutdown(struct thr_info *thr)
   if (clState) {
     clFinish(clState->commandQueue);
     clReleaseMemObject(clState->outputBuffer);
-    clReleaseMemObject(clState->CLbuffer0);
+    if (clState->CLbuffer0)
+      clReleaseMemObject(clState->CLbuffer0);
+    if (clState->Scratchpads)
+      clReleaseMemObject(clState->Scratchpads);
     if (clState->buffer1)
       clReleaseMemObject(clState->buffer1);
     if (clState->buffer2)

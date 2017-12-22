@@ -39,6 +39,7 @@
 #include "algorithm/yescrypt.h"
 #include "algorithm/lyra2rev2.h"
 #include "algorithm/equihash.h"
+#include "algorithm/lyra2Z.h"
 
 /* FIXME: only here for global config vars, replace with configuration.h
  * or similar as soon as config is in a struct instead of littered all
@@ -644,7 +645,9 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
   }
 
   // Lyra2re v2 TC
-  else if (cgpu->algorithm.type == ALGO_LYRA2REV2 && !cgpu->opt_tc) {
+  else if (
+  ((cgpu->algorithm.type == ALGO_LYRA2REV2) || (cgpu->algorithm.type == ALGO_LYRA2REV2))
+  && !cgpu->opt_tc) {
     size_t glob_thread_count;
     long max_int;
     unsigned char type = 0;
@@ -790,7 +793,7 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
 
   /* get a kernel object handle for a kernel with the given name */
   if (algorithm->type == ALGO_EQUIHASH) {
-    clState->kernel = clCreateKernel(clState->program, "kernel_sols", &status);
+  clState->kernel = clCreateKernel(clState->program, "kernel_sols", &status);
     if (status != CL_SUCCESS) {
       applog(LOG_ERR, "Error %d: Creating Kernel \"kernel_sols\" from program. (clCreateKernel)", status);
       return NULL;
@@ -799,37 +802,66 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
                             "kernel_round0", "kernel_round1", "kernel_round2",
                             "kernel_round3", "kernel_round4", "kernel_round5",
                             "kernel_round6", "kernel_round7", "kernel_round8",
-                            "kernel_potential_sols"};
+                            "kernel_potential_sols" };
     clState->n_extra_kernels = 1 + 9 + 1;
     clState->extra_kernels = (cl_kernel *)malloc(sizeof(cl_kernel) * clState->n_extra_kernels);
     for (int i = 0; i < clState->n_extra_kernels; i++) {
       clState->extra_kernels[i] = clCreateKernel(clState->program, kernel_names[i], &status);
       if (status != CL_SUCCESS) {
-        applog(LOG_ERR, "Error %d: Creating Kernel \"%s\" from program. (clCreateKernel)", status, kernel_names[i]);
+    applog(LOG_ERR, "Error %d: Creating Kernel \"%s\" from program. (clCreateKernel)", status, kernel_names[i]);
         return NULL;
       }
     }
 
     char buffer[32];
-    clState->CLbuffer0 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, sizeof(potential_sols_t), NULL, &status);
+    clState->CLbuffer0 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(0), NULL, &status);
     snprintf(buffer, sizeof(buffer), "CLbuffer0");
     if (status != CL_SUCCESS)
       goto out;
-    clState->buffer1 = NULL;
-    for (int i = 0; i < 9; i++) {
-      snprintf(buffer, sizeof(buffer), "index_buf[%d]", i);
-      clState->index_buf[i] = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HT_SIZE, NULL, &status);
-      if (status != CL_SUCCESS)
-        goto out;
-    }
-    clState->buffer2 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, RC_SIZE, NULL, &status);
+    clState->buffer1 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(1), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer1");
+    if (status != CL_SUCCESS)
+      goto out;
+    clState->buffer2 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, ROW_COUNTERS_SIZE, NULL, &status);
     snprintf(buffer, sizeof(buffer), "buffer2");
     if (status != CL_SUCCESS)
       goto out;
-    clState->buffer3 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, RC_SIZE, NULL, &status); 
+    clState->buffer3 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, ROW_COUNTERS_SIZE, NULL, &status);
     snprintf(buffer, sizeof(buffer), "buffer3");
     if (status != CL_SUCCESS)
       goto out;
+    clState->buffer4 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(2), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer4");
+    if (status != CL_SUCCESS)
+      goto out;
+    clState->buffer5 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(3), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer5");
+    if (status != CL_SUCCESS)
+      goto out;
+    clState->buffer6 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(4), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer6");
+    if (status != CL_SUCCESS)
+        goto out;
+    clState->buffer7 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(5), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer7");
+    if (status != CL_SUCCESS)
+        goto out;
+    clState->buffer8 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(6), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer8");
+    if (status != CL_SUCCESS)
+        goto out;
+    clState->buffer9 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(7), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer9");
+    if (status != CL_SUCCESS)
+        goto out;
+    clState->buffer10 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HASH_TABLE_SIZE(8), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer10");
+    if (status != CL_SUCCESS)
+        goto out;
+    clState->buffer11 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, sizeof(potential_sols_t), NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer11");
+    if (status != CL_SUCCESS)
+        goto out;
     clState->padbuffer8 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, 2 * sizeof(uint32_t), NULL, &status);
     snprintf(buffer, sizeof(buffer), "padbuffer8");
     if (status != CL_SUCCESS)
@@ -843,39 +875,20 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
     if (status != CL_SUCCESS)
       goto out;
 
-    cl_mem rowCounters[] = {clState->buffer2, clState->buffer3};
-    for (int round = 0; round < PARAM_K; round++) {
-      unsigned int num = 0;
-      cl_kernel *kernel = &clState->extra_kernels[1 + round];
-      if (!round) {
-        CL_SET_ARG(clState->MidstateBuf);
-        CL_SET_ARG(clState->index_buf[round]);
-        CL_SET_ARG(rowCounters[round % 2]);
-      }
-      else {
-        CL_SET_ARG(clState->index_buf[round - 1]);
-        CL_SET_ARG(clState->index_buf[round]);
-        CL_SET_ARG(rowCounters[(round - 1) % 2]);
-        CL_SET_ARG(rowCounters[round % 2]);
-      }
-      CL_SET_ARG(clState->padbuffer8);
-    }
     unsigned int num = 0;
-    cl_kernel *kernel = &clState->extra_kernels[1 + 9];
-    CL_SET_ARG(clState->index_buf[8]);
+    cl_kernel *kernel = &clState->kernel;
     CL_SET_ARG(clState->CLbuffer0);
-    CL_SET_ARG(rowCounters[0]);
-
-    num = 0;
-    kernel = &clState->kernel;
-    CL_SET_ARG(clState->index_buf[0]);
-    CL_SET_ARG(clState->index_buf[1]);
+    CL_SET_ARG(clState->buffer1);
     CL_SET_ARG(clState->outputBuffer);
-    CL_SET_ARG(rowCounters[0]);
-    CL_SET_ARG(rowCounters[1]);
-    for (int i = 2; i < 9; i++)
-      CL_SET_ARG(clState->index_buf[i]);
-    CL_SET_ARG(clState->CLbuffer0);
+    CL_SET_ARG(clState->buffer2);
+    CL_SET_ARG(clState->buffer3);
+    CL_SET_ARG(clState->buffer4);
+    CL_SET_ARG(clState->buffer5);
+    CL_SET_ARG(clState->buffer6);
+    CL_SET_ARG(clState->buffer7);
+    CL_SET_ARG(clState->buffer8);
+    CL_SET_ARG(clState->buffer9);
+    CL_SET_ARG(clState->buffer10);
 
     if (status != CL_SUCCESS) {
       applog(LOG_ERR, "Error %d: Setting Kernel arguments for ALGO_EQUIHASH failed. (clSetKernelArg)", status);
@@ -894,16 +907,16 @@ out:
       applog(LOG_ERR, "Error %d: Creating Kernel from program. (clCreateKernel)", status);
       return NULL;
     }
-  
+
     clState->n_extra_kernels = algorithm->n_extra_kernels;
     if (clState->n_extra_kernels > 0) {
       unsigned int i;
-      char kernel_name[9]; // max: search99 + 0x0
+      char kernel_name[10]; // max: search99 + 0x0
 
       clState->extra_kernels = (cl_kernel *)malloc(sizeof(cl_kernel)* clState->n_extra_kernels);
 
       for (i = 0; i < clState->n_extra_kernels; i++) {
-        snprintf(kernel_name, 9, "%s%d", "search", i + 1);
+        snprintf(kernel_name, 10, "%s%d", "search", i + 1);
         clState->extra_kernels[i] = clCreateKernel(clState->program, kernel_name, &status);
         if (status != CL_SUCCESS) {
           applog(LOG_ERR, "Error %d: Creating ExtraKernel #%d from program. (clCreateKernel)", status, i);
@@ -912,7 +925,7 @@ out:
       }
     }
   }
-    
+
 
   if (algorithm->type == ALGO_ETHASH) {
     clState->GenerateDAG = clCreateKernel(clState->program, "GenerateDAG", &status);
@@ -932,8 +945,20 @@ out:
     case ALGO_CRE:
       readbufsize = 168;
       break;
+    case ALGO_DECRED:
+      readbufsize = 192;
+      break;
     case ALGO_ETHASH:
       readbufsize = 32;
+      break;
+    case ALGO_PASCAL:
+      readbufsize = 196;
+      break;
+    case ALGO_LBRY:
+      readbufsize = 112;
+      break;
+    case ALGO_TRIBUS:
+      readbufsize = 128 + 16; // midstate + endofdata (16)
       break;
     default:
       readbufsize = 128;
@@ -1059,7 +1084,23 @@ out:
       return NULL;
     }
   }
-  
+
+  if (algorithm->type == ALGO_LYRA2Z) {
+    size_t GlobalThreads;
+    //readbufsize = 76UL;
+    set_threads_hashes(1, clState->compute_shaders, &GlobalThreads, 1, &cgpu->intensity, &cgpu->xintensity, &cgpu->rawintensity, &cgpu->algorithm);
+    clState->buffer1 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, 16 * 8 * GlobalThreads, NULL, &status);
+    if (status != CL_SUCCESS) {
+      applog(LOG_ERR, "Error %d when creating lyra2z state buffer.\n", status);
+      return NULL;
+    }
+    clState->Scratchpads = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, sizeof(cl_ulong)*LYRA2Z_SCRATCHBUF_SIZE * GlobalThreads, NULL, &status);
+    if (status != CL_SUCCESS) {
+      applog(LOG_ERR, "Error %d when creating lyra2z scratchpads buffer.\n", status);
+      return NULL;
+    }
+  }
+
   if (algorithm->type == ALGO_CRYPTONIGHT) {
     size_t GlobalThreads;
     readbufsize = 128UL;
@@ -1089,7 +1130,7 @@ out:
       return NULL;
     }
   }
-  
+
   applog(LOG_DEBUG, "Using read buffer sized %lu", (unsigned long)readbufsize);
   clState->CLbuffer0 = clCreateBuffer(clState->context, CL_MEM_READ_ONLY, readbufsize, NULL, &status);
   if (status != CL_SUCCESS) {
@@ -1109,4 +1150,3 @@ out:
 
   return clState;
 }
-

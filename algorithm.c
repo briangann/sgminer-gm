@@ -1855,7 +1855,7 @@ static algorithm_settings_t algos[] = {
 
   { "lyra2rev2", ALGO_LYRA2REV2, "", 1, 256, 256, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 6, -1, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, \
     lyra2rev2_regenhash, \
-    NULL< precalc_hash_blake256, \
+    NULL, precalc_hash_blake256, \
     queue_lyra2rev2_kernel, gen_hash, append_neoscrypt_compiler_options },
 
   // kernels starting from this will have difficulty calculated by using fuguecoin algorithm
